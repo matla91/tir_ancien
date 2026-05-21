@@ -12,6 +12,7 @@ from src.utils import clamp, safe_load_json
 class WeaponStats:
     weapon_id: str
     name: str
+    description: str
     price: int
     precision: float
     stability: float
@@ -46,6 +47,7 @@ class Weapon:
         stats = WeaponStats(
             weapon_id=data["id"],
             name=data["name"],
+            description=data.get("description", ""),
             price=int(data["price"]),
             precision=float(data["precision"]),
             stability=float(data["stability"]),
@@ -60,11 +62,33 @@ class Weapon:
         return Weapon(stats, sprite)
 
     @staticmethod
-    def load_starting_weapon(asset_manager) -> "Weapon":
+    def load_catalog(asset_manager) -> Dict[str, "Weapon"]:
         weapons_data = safe_load_json(DATA_DIR / "weapons.json")
-        weapon_data = weapons_data["weapons"][0]
-        sprite = asset_manager.image(weapon_data["sprite"])
-        return Weapon.from_dict(weapon_data, sprite)
+        catalog = {}
+
+        for weapon_data in weapons_data["weapons"]:
+            sprite = asset_manager.image(weapon_data["sprite"])
+            weapon = Weapon.from_dict(weapon_data, sprite)
+            catalog[weapon.stats.weapon_id] = weapon
+
+        return catalog
+
+    @staticmethod
+    def load_starting_weapon(asset_manager) -> "Weapon":
+        catalog = Weapon.load_catalog(asset_manager)
+        return next(iter(catalog.values()))
+
+    def reset_runtime_state(self, clean_barrel: bool = True) -> None:
+        self.loaded = True
+        self.reloading = False
+        self.reload_progress = 0.0
+        self.cleaning = False
+        self.clean_progress = 0.0
+        self.recoil = pygame.Vector2(0, 0)
+        self.shot_effect_time = 0.0
+
+        if clean_barrel:
+            self.fouling = 0.0
 
     def start_reload(self) -> bool:
         if self.loaded or self.reloading or self.cleaning:
