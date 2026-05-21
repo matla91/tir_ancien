@@ -156,13 +156,6 @@ class Game:
         sys.exit()
 
     def handle_primary_fire_input(self) -> None:
-        """Centralise le clic gauche pour qu'il fonctionne aussi avec Espace maintenu.
-
-        On déclenche le tir depuis MOUSEBUTTONDOWN ET depuis le polling souris.
-        Certaines configurations Windows/trackpad/clavier perdent le rising edge du
-        clic quand une touche comme Espace est maintenue. Cette méthode unique évite
-        les doublons : try_fire ignore déjà les tirs impossibles ou en cours.
-        """
         if self.state == "menu":
             self.state = "playing"
             self.show_message("25 m : série de 5 coups.", 1.5)
@@ -174,9 +167,6 @@ class Game:
             if event.type == pygame.QUIT:
                 self.quit()
 
-            # Important : le tir est traité ici aussi, pas seulement par polling.
-            # Cela corrige le cas où le clic gauche n'est pas détecté correctement
-            # pendant que le joueur maintient Espace pour contrôler la respiration.
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 self.handle_primary_fire_input()
 
@@ -203,7 +193,9 @@ class Game:
                         self.handle_shop_selection(event.key - pygame.K_1)
 
                 elif self.state == "playing":
-                    if event.key == pygame.K_b:
+                    if event.key in (pygame.K_f, pygame.K_LCTRL, pygame.K_RCTRL):
+                        self.handle_primary_fire_input()
+                    elif event.key == pygame.K_b:
                         self.state = "shop"
                         self.show_message("Boutique ouverte.", 1.0)
                     elif event.key == pygame.K_r:
@@ -383,13 +375,19 @@ class Game:
 
         muzzle = self.weapon.muzzle_screen_pos(aim)
         direction = aim - self.weapon.anchor_screen_pos()
-        self.smoke.spawn(muzzle, direction, count=46 if shot.score >= 8 else 36)
+        smoke_count = 58 if shot.score == 10 else 46 if shot.score >= 8 else 36
+        self.smoke.spawn(muzzle, direction, count=smoke_count)
         self.impact_feedback.spawn(pygame.Vector2(shot.x, shot.y), shot.score)
 
-        floating_color = YELLOW if reward > 0 else (220, 220, 220)
-        floating_text = f"{shot.score} pts  +${reward}" if reward > 0 else f"{shot.score} pts"
-        self.floating_text.spawn(floating_text, pygame.Vector2(shot.x + 18, shot.y - 28), floating_color)
-        self.start_camera_shake(strength=11.0 if shot.score >= 8 else 8.0, duration=0.22)
+        if shot.score == 10:
+            floating_color = (255, 226, 92)
+            floating_text = f"PARFAIT 10  +${reward}"
+        else:
+            floating_color = YELLOW if reward > 0 else (220, 220, 220)
+            floating_text = f"{shot.score} pts  +${reward}" if reward > 0 else f"{shot.score} pts"
+        self.floating_text.spawn(floating_text, pygame.Vector2(shot.x + 18, shot.y - 28), floating_color, size=32 if shot.score == 10 else 28)
+
+        self.start_camera_shake(strength=13.0 if shot.score == 10 else 11.0 if shot.score >= 8 else 8.0, duration=0.24)
 
         if self.shot_sound:
             try:
@@ -403,7 +401,9 @@ class Game:
 
         reward_text = f" +${reward}" if reward > 0 else ""
         aim_text = f" | {self.last_aim_rating}"
-        if shot.score >= 9:
+        if shot.score == 10:
+            self.show_message(f"Plein centre : 10 points.{reward_text}{aim_text}", 1.6)
+        elif shot.score >= 9:
             self.show_message(f"Très beau coup : {shot.score} points.{reward_text}{aim_text}", 1.4)
         elif shot.score >= 6:
             self.show_message(f"Impact correct : {shot.score} points.{reward_text}{aim_text}", 1.4)
@@ -603,10 +603,3 @@ class Game:
         pygame.draw.line(surface, color, (aim.x + 9, aim.y), (aim.x + 28, aim.y), 3)
         pygame.draw.line(surface, color, (aim.x, aim.y - 28), (aim.x, aim.y - 9), 3)
         pygame.draw.line(surface, color, (aim.x, aim.y + 9), (aim.x, aim.y + 28), 3)
-
-        label = f"{self.last_aim_rating} {int(self.last_stability_score * 100)}%"
-        font = pygame.font.SysFont("arial", 16, bold=True)
-        text = font.render(label, True, color)
-        shadow = font.render(label, True, BLACK)
-        surface.blit(shadow, (aim.x + 18, aim.y + 18))
-        surface.blit(text, (aim.x + 16, aim.y + 16))
