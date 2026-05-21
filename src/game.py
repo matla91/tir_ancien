@@ -56,6 +56,7 @@ class Game:
         self.current_weapon_id = self.shop_weapon_ids[0]
         self.weapon = self.weapon_catalog[self.current_weapon_id]
         self.shot_sound = self.assets.build_flintlock_shot_sound()
+        self.target_hit_sound = self.assets.build_target_hit_sound()
 
         self.money = 0
         self.last_reward = 0
@@ -66,6 +67,7 @@ class Game:
 
         self.all_shots: List[Shot] = []
         self.stage_shots: List[Shot] = []
+        self.pending_impacts = []
 
         self.mouse_pos = pygame.Vector2(WIDTH / 2, HEIGHT / 2)
         self.prev_mouse_pos = pygame.Vector2(WIDTH / 2, HEIGHT / 2)
@@ -107,6 +109,7 @@ class Game:
         self.smoke = SmokeSystem()
         self.floating_text = FloatingTextSystem()
         self.impact_feedback = ImpactFeedbackSystem()
+        self.pending_impacts.clear()
 
         self.stage_index = 0
         self.all_shots.clear()
@@ -220,6 +223,7 @@ class Game:
         if self.state != "shop":
             self.weapon.update(dt)
             self.update_pending_shot(dt)
+            self.update_pending_impacts(dt)
 
         self.smoke.update(dt)
         self.floating_text.update(dt)
@@ -323,6 +327,14 @@ class Game:
         strength = self.shake_strength * t * t
         self.camera_offset.update(random.uniform(-strength, strength), random.uniform(-strength, strength))
 
+    def shot_speed_mps(self) -> float:
+        if "percussion" in self.weapon.stats.weapon_id:
+            return 205.0
+        return 170.0
+
+    def travel_time_seconds(self, distance_m: int) -> float:
+        return distance_m / self.shot_speed_mps()
+
     def try_fire(self) -> None:
         if self.pending_shot_delay > 0:
             return
@@ -350,6 +362,19 @@ class Game:
         if self.pending_shot_delay <= 0:
             self.finish_fire()
 
+    def update_pending_impacts(self, dt: float) -> None:
+        if not self.pending_impacts:
+            return
+
+        remaining = []
+        for pending in self.pending_impacts:
+            pending["time_left"] -= dt
+            if pending["time_left"] <= 0:
+                self.resolve_impact(pending)
+            else:
+                remaining.append(pending)
+        self.pending_impacts = remaining
+
     def finish_fire(self) -> None:
         aim = self.current_aim_point()
         speed_penalty = clamp(self.pending_trigger_speed / 900.0, 0.0, 1.0)
@@ -362,32 +387,13 @@ class Game:
         wind_offset = self.wind * (self.distance / 100) * 12.0
         impact = pygame.Vector2(aim.x + dx + wind_offset, aim.y + dy)
 
-        shot = self.target.score_impact(impact, self.distance)
-        self.all_shots.append(shot)
-        self.stage_shots.append(shot)
-
         self.weapon.apply_shot_feedback()
         self.fatigue = clamp(self.fatigue + 3.5, 0, 100)
 
-        reward = self.cash_reward_for_shot(shot)
-        self.money += reward
-        self.last_reward = reward
-
         muzzle = self.weapon.muzzle_screen_pos(aim)
         direction = aim - self.weapon.anchor_screen_pos()
-        smoke_count = 58 if shot.score == 10 else 46 if shot.score >= 8 else 36
-        self.smoke.spawn(muzzle, direction, count=smoke_count)
-        self.impact_feedback.spawn(pygame.Vector2(shot.x, shot.y), shot.score)
-
-        if shot.score == 10:
-            floating_color = (255, 226, 92)
-            floating_text = f"PARFAIT 10  +${reward}"
-        else:
-            floating_color = YELLOW if reward > 0 else (220, 220, 220)
-            floating_text = f"{shot.score} pts  +${reward}" if reward > 0 else f"{shot.score} pts"
-        self.floating_text.spawn(floating_text, pygame.Vector2(shot.x + 18, shot.y - 28), floating_color, size=32 if shot.score == 10 else 28)
-
-        self.start_camera_shake(strength=13.0 if shot.score == 10 else 11.0 if shot.score >= 8 else 8.0, duration=0.24)
+        self.smoke.spawn(muzzle, direction, count=42)
+        self.start_camera_shake(strength=9.0, duration=0.20)
 
         if self.shot_sound:
             try:
@@ -395,12 +401,52 @@ class Game:
             except Exception:
                 pass
 
+        wait = self.travel_time_seconds(self.distance)
+        self.pending_impacts.append(
+            {
+                "time_left": wait,
+                "impact": impact,
+                "distance": self.distance,
+                "aim_rating": self.last_aim_rating,
+            }
+        )
+
+        if self.distance >= 100:
+            self.show_message(f"Coup parti... impact dans {wait:.1f}s", min(1.0, wait))
+
         self.pending_shot_delay = 0.0
         self.pending_shot_start_delay = 0.0
         self.pending_trigger_speed = 0.0
 
+    def resolve_impact(self, pending: dict) -> None:
+        shot = self.target.score_impact(pending["impact"], pending["distance"])
+        self.all_shots.append(shot)
+        self.stage_shots.append(shot)
+
+        if self.target_hit_sound and shot.score > 0:
+            try:
+                self.target_hit_sound.play()
+            except Exception:
+                pass
+
+        reward = self.cash_reward_for_shot(shot)
+        self.money += reward
+        self.last_reward = reward
+
+        self.impact_feedback.spawn(pygame.Vector2(shot.x, shot.y), shot.score)
+
+        if shot.score == 10:
+            floating_color = (255, 226, 92)
+            floating_text = f"PARFAIT 10  +${reward}"
+            size = 32
+        else:
+            floating_color = YELLOW if reward > 0 else (220, 220, 220)
+            floating_text = f"{shot.score} pts  +${reward}" if reward > 0 else f"{shot.score} pts"
+            size = 28
+        self.floating_text.spawn(floating_text, pygame.Vector2(shot.x + 18, shot.y - 28), floating_color, size=size)
+
         reward_text = f" +${reward}" if reward > 0 else ""
-        aim_text = f" | {self.last_aim_rating}"
+        aim_text = f" | {pending['aim_rating']}"
         if shot.score == 10:
             self.show_message(f"Plein centre : 10 points.{reward_text}{aim_text}", 1.6)
         elif shot.score >= 9:
@@ -435,6 +481,7 @@ class Game:
         self.target.clear_stage()
         self.floating_text = FloatingTextSystem()
         self.impact_feedback = ImpactFeedbackSystem()
+        self.pending_impacts.clear()
 
         self.weapon.loaded = True
         self.weapon.reloading = False
