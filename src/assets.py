@@ -27,8 +27,37 @@ class AssetManager:
         self.images[relative_path] = image
         return image
 
+    def sound(self, relative_path: str) -> Optional[pygame.mixer.Sound]:
+        if relative_path in self.sounds:
+            return self.sounds[relative_path]
+
+        path = ASSETS_DIR / relative_path
+        if not path.exists():
+            return None
+
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+
+            sound = pygame.mixer.Sound(str(path))
+            self.sounds[relative_path] = sound
+            return sound
+        except Exception:
+            return None
+
     def build_flintlock_shot_sound(self) -> Optional[pygame.mixer.Sound]:
-        """Génère un son de tir sans fichier externe."""
+        """Charge un vrai son de tir si présent, sinon génère un fallback.
+
+        Place ton fichier ici, dans l'un de ces formats :
+        - assets/sounds/flintlock_shot.ogg
+        - assets/sounds/flintlock_shot.wav
+
+        OGG est recommandé pour GitHub : plus léger qu'un WAV.
+        """
+        real_sound = self.sound("sounds/flintlock_shot.ogg") or self.sound("sounds/flintlock_shot.wav")
+        if real_sound is not None:
+            return real_sound
+
         try:
             if not pygame.mixer.get_init():
                 pygame.mixer.init()
