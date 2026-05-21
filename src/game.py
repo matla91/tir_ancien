@@ -6,7 +6,7 @@ from typing import List
 import pygame
 
 from src.assets import AssetManager
-from src.effects import SmokeSystem
+from src.effects import FloatingTextSystem, ImpactFeedbackSystem, SmokeSystem
 from src.settings import (
     BLACK,
     FOREST,
@@ -18,6 +18,7 @@ from src.settings import (
     SHOTS_PER_STAGE,
     STAGES_METERS,
     WIDTH,
+    YELLOW,
 )
 from src.target import Shot, Target
 from src.ui import UI
@@ -36,12 +37,15 @@ class Game:
         pygame.display.set_caption("Flintlock Range MVP")
 
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        self.world_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self.clock = pygame.time.Clock()
 
         self.assets = AssetManager()
         self.ui = UI()
         self.target = Target()
         self.smoke = SmokeSystem()
+        self.floating_text = FloatingTextSystem()
+        self.impact_feedback = ImpactFeedbackSystem()
 
         self.weapon_catalog = Weapon.load_catalog(self.assets)
         self.shop_weapon_ids = list(self.weapon_catalog.keys())
@@ -80,6 +84,11 @@ class Game:
         self.pending_shot_start_delay = 0.0
         self.pending_trigger_speed = 0.0
 
+        self.shake_time = 0.0
+        self.shake_duration = 0.0
+        self.shake_strength = 0.0
+        self.camera_offset = pygame.Vector2(0, 0)
+
         self.message = "Entrée : commencer"
         self.message_time = 0.0
 
@@ -90,6 +99,8 @@ class Game:
     def reset(self) -> None:
         self.target.clear_stage()
         self.smoke = SmokeSystem()
+        self.floating_text = FloatingTextSystem()
+        self.impact_feedback = ImpactFeedbackSystem()
 
         self.stage_index = 0
         self.all_shots.clear()
@@ -104,6 +115,11 @@ class Game:
         self.pending_shot_delay = 0.0
         self.pending_shot_start_delay = 0.0
         self.pending_trigger_speed = 0.0
+
+        self.shake_time = 0.0
+        self.shake_duration = 0.0
+        self.shake_strength = 0.0
+        self.camera_offset.update(0, 0)
 
         for weapon in self.weapon_catalog.values():
             weapon.reset_runtime_state(clean_barrel=True)
@@ -186,6 +202,9 @@ class Game:
             self.update_pending_shot(dt)
 
         self.smoke.update(dt)
+        self.floating_text.update(dt)
+        self.impact_feedback.update(dt)
+        self.update_camera_shake(dt)
 
         if self.message_time > 0:
             self.message_time -= dt
@@ -222,6 +241,21 @@ class Game:
         if random.random() < 0.008:
             self.wind_target = random.uniform(-1.1, 1.1)
         self.wind = lerp(self.wind, self.wind_target, 0.35 * dt)
+
+    def start_camera_shake(self, strength: float = 9.0, duration: float = 0.20) -> None:
+        self.shake_strength = max(self.shake_strength, strength)
+        self.shake_duration = duration
+        self.shake_time = duration
+
+    def update_camera_shake(self, dt: float) -> None:
+        if self.shake_time <= 0:
+            self.camera_offset.update(0, 0)
+            return
+
+        self.shake_time = max(0, self.shake_time - dt)
+        t = self.shake_time / max(self.shake_duration, 0.001)
+        strength = self.shake_strength * t * t
+        self.camera_offset.update(random.uniform(-strength, strength), random.uniform(-strength, strength))
 
     def try_fire(self) -> None:
         if self.pending_shot_delay > 0:
@@ -273,7 +307,14 @@ class Game:
 
         muzzle = self.weapon.muzzle_screen_pos(aim)
         direction = aim - self.weapon.anchor_screen_pos()
-        self.smoke.spawn(muzzle, direction)
+        self.smoke.spawn(muzzle, direction, count=46 if shot.score >= 8 else 36)
+        self.impact_feedback.spawn(pygame.Vector2(shot.x, shot.y), shot.score)
+
+        floating_color = YELLOW if reward > 0 else (220, 220, 220)
+        floating_text = f"{shot.score} pts  +${reward}" if reward > 0 else f"{shot.score} pts"
+        self.floating_text.spawn(floating_text, pygame.Vector2(shot.x + 18, shot.y - 28), floating_color)
+
+        self.start_camera_shake(strength=11.0 if shot.score >= 8 else 8.0, duration=0.22)
 
         if self.shot_sound:
             try:
@@ -320,6 +361,8 @@ class Game:
 
         self.stage_shots.clear()
         self.target.clear_stage()
+        self.floating_text = FloatingTextSystem()
+        self.impact_feedback = ImpactFeedbackSystem()
 
         self.weapon.loaded = True
         self.weapon.reloading = False
@@ -404,14 +447,20 @@ class Game:
         return self.mouse_pos + self.current_sway() + self.weapon.recoil
 
     def draw(self) -> None:
-        self.draw_background()
-        self.target.draw(self.screen, self.distance)
-        self.smoke.draw(self.screen)
+        self.world_surface.fill((0, 0, 0, 0))
+        self.draw_background(self.world_surface)
+        self.target.draw(self.world_surface, self.distance)
+        self.impact_feedback.draw(self.world_surface)
+        self.smoke.draw(self.world_surface)
 
         if self.state != "menu":
-            self.weapon.draw(self.screen, self.current_aim_point())
+            self.weapon.draw(self.world_surface, self.current_aim_point())
 
-        self.draw_crosshair()
+        self.draw_crosshair(self.world_surface)
+        self.floating_text.draw(self.world_surface)
+
+        self.screen.fill((0, 0, 0))
+        self.screen.blit(self.world_surface, self.camera_offset)
 
         if self.state == "menu":
             self.ui.draw_menu(self.screen)
@@ -427,23 +476,23 @@ class Game:
 
         pygame.display.flip()
 
-    def draw_background(self) -> None:
-        self.screen.fill(FOREST_DARK)
+    def draw_background(self, surface: pygame.Surface) -> None:
+        surface.fill(FOREST_DARK)
 
-        pygame.draw.rect(self.screen, (132, 162, 178), (0, 0, WIDTH, 140))
+        pygame.draw.rect(surface, (132, 162, 178), (0, 0, WIDTH, 140))
 
         for i in range(0, WIDTH, 38):
             h = 105 + int(45 * math.sin(i * 0.04))
             color = FOREST if (i // 38) % 2 else FOREST_DARK
-            pygame.draw.polygon(self.screen, color, [(i - 30, 155), (i + 18, 155 - h), (i + 66, 155)])
+            pygame.draw.polygon(surface, color, [(i - 30, 155), (i + 18, 155 - h), (i + 66, 155)])
 
-        pygame.draw.polygon(self.screen, SAND, [(0, 250), (WIDTH, 220), (WIDTH, HEIGHT), (0, HEIGHT)])
+        pygame.draw.polygon(surface, SAND, [(0, 250), (WIDTH, 220), (WIDTH, HEIGHT), (0, HEIGHT)])
 
-        pygame.draw.ellipse(self.screen, SAND_DARK, (WIDTH * 0.40, 135, 500, 210))
-        pygame.draw.ellipse(self.screen, SAND, (WIDTH * 0.43, 155, 430, 155))
+        pygame.draw.ellipse(surface, SAND_DARK, (WIDTH * 0.40, 135, 500, 210))
+        pygame.draw.ellipse(surface, SAND, (WIDTH * 0.43, 155, 430, 155))
 
         pygame.draw.polygon(
-            self.screen,
+            surface,
             (185, 151, 94),
             [(WIDTH * 0.22, HEIGHT), (WIDTH * 0.50, 205), (WIDTH * 0.66, 205), (WIDTH * 0.95, HEIGHT)],
         )
@@ -453,20 +502,20 @@ class Game:
             x = random.randint(0, WIDTH)
             y = random.randint(280, HEIGHT)
             r = random.randint(1, 4)
-            pygame.draw.circle(self.screen, (130, 105, 73), (x, y), r)
+            pygame.draw.circle(surface, (130, 105, 73), (x, y), r)
         random.seed()
 
-    def draw_crosshair(self) -> None:
+    def draw_crosshair(self, surface: pygame.Surface) -> None:
         if self.state == "shop":
             return
 
         aim = self.current_aim_point()
 
-        pygame.draw.circle(self.screen, BLACK, aim, 13, 2)
-        pygame.draw.line(self.screen, BLACK, (aim.x - 24, aim.y), (aim.x - 8, aim.y), 2)
-        pygame.draw.line(self.screen, BLACK, (aim.x + 8, aim.y), (aim.x + 24, aim.y), 2)
-        pygame.draw.line(self.screen, BLACK, (aim.x, aim.y - 24), (aim.x, aim.y - 8), 2)
-        pygame.draw.line(self.screen, BLACK, (aim.x, aim.y + 8), (aim.x, aim.y + 24), 2)
+        pygame.draw.circle(surface, BLACK, aim, 13, 2)
+        pygame.draw.line(surface, BLACK, (aim.x - 24, aim.y), (aim.x - 8, aim.y), 2)
+        pygame.draw.line(surface, BLACK, (aim.x + 8, aim.y), (aim.x + 24, aim.y), 2)
+        pygame.draw.line(surface, BLACK, (aim.x, aim.y - 24), (aim.x, aim.y - 8), 2)
+        pygame.draw.line(surface, BLACK, (aim.x, aim.y + 8), (aim.x, aim.y + 24), 2)
 
         stability_radius = clamp(6 + self.current_sway().length() * 0.8 + self.mouse_speed * 0.015, 8, 58)
-        pygame.draw.circle(self.screen, (30, 30, 30), aim, stability_radius, 1)
+        pygame.draw.circle(surface, (30, 30, 30), aim, stability_radius, 1)
