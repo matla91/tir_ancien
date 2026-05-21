@@ -61,6 +61,7 @@ class Game:
         self.owned_target_ids = {"sport_precision"}
         self.current_target_id = "sport_precision"
         self.target.set_type(self.current_target_id)
+        self.shop_selected_index = 0
 
         self.shot_sound = self.assets.build_flintlock_shot_sound()
         self.target_hit_sound = self.assets.build_target_hit_sound()
@@ -133,6 +134,9 @@ class Game:
     def distance(self) -> int:
         return self.stages[self.stage_index]
 
+    def shop_item_count(self) -> int:
+        return len(self.shop_weapon_ids) + len(self.shop_target_ids)
+
     def reset(self) -> None:
         self.target.clear_stage()
         self.smoke = SmokeSystem()
@@ -177,8 +181,8 @@ class Game:
         self.message_time = duration
 
     def run(self) -> None:
-        pygame.mouse.set_visible(False)
         while True:
+            pygame.mouse.set_visible(self.state == "shop")
             dt = self.clock.tick(FPS) / 1000.0
             self.handle_events()
             self.update(dt)
@@ -191,6 +195,7 @@ class Game:
     def handle_primary_fire_input(self) -> None:
         if self.state == "menu":
             self.state = "playing"
+            pygame.mouse.set_visible(False)
             self.show_message("25 m : série de 5 coups.", 1.5)
         elif self.state == "playing":
             self.try_fire()
@@ -201,7 +206,15 @@ class Game:
                 self.quit()
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                self.handle_primary_fire_input()
+                if self.state == "shop":
+                    self.handle_shop_click(event.pos)
+                else:
+                    self.handle_primary_fire_input()
+
+            if event.type == pygame.MOUSEMOTION and self.state == "shop":
+                hovered = self.shop_index_from_pos(event.pos)
+                if hovered is not None:
+                    self.shop_selected_index = hovered
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
@@ -209,6 +222,7 @@ class Game:
 
                 if self.state == "menu" and event.key == pygame.K_RETURN:
                     self.state = "playing"
+                    pygame.mouse.set_visible(False)
                     self.show_message("25 m : série de 5 coups.", 1.5)
 
                 elif self.state == "stage_done" and event.key == pygame.K_RETURN:
@@ -217,11 +231,19 @@ class Game:
                 elif self.state == "game_over" and event.key == pygame.K_RETURN:
                     self.reset()
                     self.state = "playing"
+                    pygame.mouse.set_visible(False)
 
                 elif self.state == "shop":
-                    if event.key == pygame.K_b:
+                    if event.key in (pygame.K_b, pygame.K_ESCAPE):
                         self.state = "playing"
+                        pygame.mouse.set_visible(False)
                         self.show_message("Retour au pas de tir.", 1.0)
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        self.shop_selected_index = (self.shop_selected_index + 1) % self.shop_item_count()
+                    elif event.key in (pygame.K_UP, pygame.K_w):
+                        self.shop_selected_index = (self.shop_selected_index - 1) % self.shop_item_count()
+                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        self.handle_shop_selection(self.shop_selected_index)
                     elif pygame.K_1 <= event.key <= pygame.K_9:
                         self.handle_shop_selection(event.key - pygame.K_1)
 
@@ -230,6 +252,7 @@ class Game:
                         self.handle_primary_fire_input()
                     elif event.key == pygame.K_b:
                         self.state = "shop"
+                        pygame.mouse.set_visible(True)
                         self.show_message("Boutique ouverte.", 1.0)
                     elif event.key == pygame.K_r:
                         if self.weapon.start_reload():
@@ -239,6 +262,36 @@ class Game:
                     elif event.key == pygame.K_c:
                         if self.weapon.start_cleaning():
                             self.show_message("Nettoyage du canon...", 0.8)
+
+    def shop_index_from_pos(self, pos: tuple[int, int]) -> int | None:
+        x, y = pos
+        start_x = 245
+        card_w = 760
+        if not (start_x <= x <= start_x + card_w):
+            return None
+
+        current_y = 195
+        card_h = 62
+        for index in range(len(self.shop_weapon_ids)):
+            if current_y <= y <= current_y + card_h:
+                return index
+            current_y += card_h + 8
+
+        current_y += 36
+        target_card_h = 58
+        base = len(self.shop_weapon_ids)
+        for index in range(len(self.shop_target_ids)):
+            if current_y <= y <= current_y + target_card_h:
+                return base + index
+            current_y += target_card_h + 8
+
+        return None
+
+    def handle_shop_click(self, pos: tuple[int, int]) -> None:
+        index = self.shop_index_from_pos(pos)
+        if index is not None:
+            self.shop_selected_index = index
+            self.handle_shop_selection(index)
 
     def update(self, dt: float) -> None:
         self.time += dt
@@ -271,7 +324,7 @@ class Game:
 
     def update_click_polling(self) -> None:
         left_down = pygame.mouse.get_pressed(num_buttons=3)[0]
-        if left_down and not self.prev_left_down:
+        if self.state != "shop" and left_down and not self.prev_left_down:
             self.handle_primary_fire_input()
         self.prev_left_down = left_down
 
