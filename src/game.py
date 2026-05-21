@@ -44,6 +44,7 @@ class Game:
         self.clock = pygame.time.Clock()
 
         self.assets = AssetManager()
+        self.background_image = self.load_background_image()
         self.ui = UI()
         self.target = Target()
         self.smoke = SmokeSystem()
@@ -99,6 +100,28 @@ class Game:
 
         self.message = "Entrée : commencer"
         self.message_time = 0.0
+
+    def load_background_image(self) -> pygame.Surface | None:
+        candidates = [
+            "images/backgrounds/background_1.png",
+            "images/backgrounds/background_1.jpg",
+            "images/backgrounds/background_1.jpeg",
+            "images/backgrounds/background_1.webp",
+            "images/background_1.png",
+            "images/background_1.jpg",
+            "images/background_1.jpeg",
+            "images/background_1.webp",
+            "background_1.png",
+            "background_1.jpg",
+            "background_1.jpeg",
+            "background_1.webp",
+        ]
+
+        for path in candidates:
+            image = self.assets.image(path, alpha=False)
+            if image is not None:
+                return image
+        return None
 
     @property
     def distance(self) -> int:
@@ -605,13 +628,16 @@ class Game:
         pygame.display.flip()
 
     def draw_background(self, surface: pygame.Surface) -> None:
+        if self.background_image is not None:
+            self.draw_background_asset(surface)
+            return
+
         depth = self.distance_depth_factor()
         horizon_y = int(218 - 28 * depth)
         lane_vanish = pygame.Vector2(WIDTH * 0.62, horizon_y + 12)
 
         surface.fill(FOREST_DARK)
 
-        # Sky gradient.
         for y in range(0, horizon_y):
             k = y / max(1, horizon_y)
             color = (
@@ -621,19 +647,16 @@ class Game:
             )
             pygame.draw.line(surface, color, (0, y), (WIDTH, y))
 
-        # Far forest line: smaller and hazier as distance increases.
         for i in range(-40, WIDTH + 60, 34):
             h = 75 + int(32 * math.sin(i * 0.041))
             base_y = horizon_y + 8
             color = (42, 72, 48) if (i // 34) % 2 else (34, 60, 42)
             pygame.draw.polygon(surface, color, [(i - 30, base_y), (i + 16, base_y - h), (i + 62, base_y)])
 
-        # Mid/near sand quarry.
         pygame.draw.polygon(surface, SAND, [(0, horizon_y + 30), (WIDTH, horizon_y + 5), (WIDTH, HEIGHT), (0, HEIGHT)])
         pygame.draw.ellipse(surface, SAND_DARK, (WIDTH * 0.38, horizon_y - 36, 560, 190))
         pygame.draw.ellipse(surface, SAND, (WIDTH * 0.42, horizon_y - 16, 470, 130))
 
-        # Perspective shooting lane: strong converging lines toward the target area.
         lane_left_near = pygame.Vector2(WIDTH * 0.18, HEIGHT)
         lane_right_near = pygame.Vector2(WIDTH * 0.98, HEIGHT)
         lane_left_far = lane_vanish + pygame.Vector2(-34, 10)
@@ -643,26 +666,6 @@ class Game:
         pygame.draw.line(surface, (122, 96, 62), lane_left_near, lane_left_far, 4)
         pygame.draw.line(surface, (122, 96, 62), lane_right_near, lane_right_far, 4)
 
-        # Range markers on the side make distance readable at a glance.
-        font = pygame.font.SysFont("arial", 15, bold=True)
-        for mark in STAGES_METERS:
-            m = clamp((mark - 25) / 175, 0, 1)
-            y = int(HEIGHT - 88 - m * (HEIGHT - horizon_y - 135))
-            x_left = int(170 + m * (lane_vanish.x - 190))
-            scale = clamp(1.0 - m * 0.58, 0.42, 1.0)
-            post_h = int(58 * scale)
-            post_w = max(3, int(6 * scale))
-
-            pygame.draw.line(surface, (92, 62, 36), (x_left, y), (x_left, y - post_h), post_w)
-            plate = pygame.Rect(x_left + 8, y - post_h - 18, int(58 * scale), int(24 * scale))
-            pygame.draw.rect(surface, (72, 53, 32), plate, border_radius=3)
-            pygame.draw.rect(surface, (35, 25, 16), plate, max(1, int(2 * scale)), border_radius=3)
-
-            label = font.render(f"{mark} m", True, (238, 226, 189))
-            label = pygame.transform.smoothscale(label, (max(1, int(label.get_width() * scale)), max(1, int(label.get_height() * scale))))
-            surface.blit(label, (plate.x + 5 * scale, plate.y + 4 * scale))
-
-        # Ground pebbles/grass also follow perspective: large in front, tiny in back.
         random.seed(3)
         for _ in range(85):
             z = random.random() ** 0.55
@@ -674,13 +677,36 @@ class Game:
             pygame.draw.circle(surface, (130, 105, 73), (x, y), r)
         random.seed()
 
-        # Atmospheric haze on long range: far target becomes slightly washed out.
         if depth > 0.05:
             haze = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             haze_alpha = int(18 + 58 * depth)
             pygame.draw.rect(haze, (205, 199, 177, haze_alpha), (0, 0, WIDTH, int(horizon_y + 125)))
             pygame.draw.polygon(haze, (220, 210, 185, int(30 * depth)), [(0, horizon_y + 30), (WIDTH, horizon_y), (WIDTH, HEIGHT), (0, HEIGHT)])
             surface.blit(haze, (0, 0))
+
+    def draw_background_asset(self, surface: pygame.Surface) -> None:
+        image = self.background_image
+        assert image is not None
+
+        iw, ih = image.get_size()
+        scale = max(WIDTH / iw, HEIGHT / ih)
+        scaled_size = (int(iw * scale), int(ih * scale))
+        scaled = pygame.transform.smoothscale(image, scaled_size)
+
+        crop_x = max(0, min(scaled.get_width() - WIDTH, int((scaled.get_width() - WIDTH) * 0.48)))
+        crop_y = max(0, min(scaled.get_height() - HEIGHT, int((scaled.get_height() - HEIGHT) * 0.36)))
+        surface.blit(scaled, (-crop_x, -crop_y))
+
+        depth = self.distance_depth_factor()
+        if depth > 0.08:
+            haze = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            pygame.draw.rect(haze, (218, 210, 188, int(18 + 34 * depth)), (0, 120, WIDTH, 310))
+            surface.blit(haze, (0, 0))
+
+        vignette = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        pygame.draw.rect(vignette, (0, 0, 0, 72), (0, 0, 350, HEIGHT))
+        pygame.draw.rect(vignette, (0, 0, 0, 24), (350, 0, 160, HEIGHT))
+        surface.blit(vignette, (0, 0))
 
     def crosshair_color(self) -> tuple[int, int, int]:
         if self.last_stability_score >= 0.78:
