@@ -23,7 +23,7 @@ from src.settings import (
     WIDTH,
     YELLOW,
 )
-from src.target import Shot, Target
+from src.target import Shot, TARGET_CATALOG, Target
 from src.ui import UI
 from src.utils import clamp, lerp
 from src.weapons import Weapon
@@ -56,6 +56,12 @@ class Game:
         self.owned_weapon_ids = {self.shop_weapon_ids[0]}
         self.current_weapon_id = self.shop_weapon_ids[0]
         self.weapon = self.weapon_catalog[self.current_weapon_id]
+
+        self.shop_target_ids = list(TARGET_CATALOG.keys())
+        self.owned_target_ids = {"sport_precision"}
+        self.current_target_id = "sport_precision"
+        self.target.set_type(self.current_target_id)
+
         self.shot_sound = self.assets.build_flintlock_shot_sound()
         self.target_hit_sound = self.assets.build_target_hit_sound()
 
@@ -163,6 +169,7 @@ class Game:
             weapon.reset_runtime_state(clean_barrel=True)
 
         self.weapon = self.weapon_catalog[self.current_weapon_id]
+        self.target.set_type(self.current_target_id)
         self.show_message("Nouveau parcours : 25 m.", 1.5)
 
     def show_message(self, text: str, duration: float = 1.4) -> None:
@@ -496,9 +503,10 @@ class Game:
         if shot.score <= 0:
             return 0
         distance_multiplier = self.distance / 25
-        reward = int(shot.score * distance_multiplier * 3)
+        target_multiplier = self.target.target_type.reward_multiplier
+        reward = int(shot.score * distance_multiplier * target_multiplier * 3)
         if shot.score == 10:
-            reward += int(5 * distance_multiplier)
+            reward += int(5 * distance_multiplier * target_multiplier)
         return max(1, reward)
 
     def next_stage(self) -> None:
@@ -527,6 +535,14 @@ class Game:
         self.state = "playing"
 
     def handle_shop_selection(self, index: int) -> None:
+        if index < len(self.shop_weapon_ids):
+            self.handle_weapon_shop_selection(index)
+            return
+
+        target_index = index - len(self.shop_weapon_ids)
+        self.handle_target_shop_selection(target_index)
+
+    def handle_weapon_shop_selection(self, index: int) -> None:
         if index < 0 or index >= len(self.shop_weapon_ids):
             return
 
@@ -546,6 +562,34 @@ class Game:
         self.owned_weapon_ids.add(weapon_id)
         self.equip_weapon(weapon_id)
         self.show_message(f"Acheté et équipé : {weapon.stats.name}.", 1.6)
+
+    def handle_target_shop_selection(self, index: int) -> None:
+        if index < 0 or index >= len(self.shop_target_ids):
+            return
+
+        target_id = self.shop_target_ids[index]
+        target_type = TARGET_CATALOG[target_id]
+
+        if target_id in self.owned_target_ids:
+            self.equip_target(target_id)
+            return
+
+        if self.money < target_type.price:
+            missing = target_type.price - self.money
+            self.show_message(f"Pas assez d'argent. Il manque ${missing}.", 1.6)
+            return
+
+        self.money -= target_type.price
+        self.owned_target_ids.add(target_id)
+        self.equip_target(target_id)
+        self.show_message(f"Cible achetée : {target_type.name}.", 1.6)
+
+    def equip_target(self, target_id: str) -> None:
+        if target_id not in TARGET_CATALOG:
+            return
+        self.current_target_id = target_id
+        self.target.set_type(target_id)
+        self.show_message(f"Cible équipée : {self.target.target_type.name}.", 1.2)
 
     def equip_weapon(self, weapon_id: str) -> None:
         if weapon_id not in self.weapon_catalog:
