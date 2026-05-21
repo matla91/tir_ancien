@@ -42,8 +42,17 @@ class Game:
         self.ui = UI()
         self.target = Target()
         self.smoke = SmokeSystem()
-        self.weapon = Weapon.load_starting_weapon(self.assets)
+
+        self.weapon_catalog = Weapon.load_catalog(self.assets)
+        self.shop_weapon_ids = list(self.weapon_catalog.keys())
+        self.owned_weapon_ids = {self.shop_weapon_ids[0]}
+        self.current_weapon_id = self.shop_weapon_ids[0]
+        self.weapon = self.weapon_catalog[self.current_weapon_id]
+
         self.shot_sound = self.assets.build_flintlock_shot_sound()
+
+        self.money = 0
+        self.last_reward = 0
 
         self.stages = STAGES_METERS[:]
         self.shots_per_stage = SHOTS_PER_STAGE
@@ -79,7 +88,6 @@ class Game:
         return self.stages[self.stage_index]
 
     def reset(self) -> None:
-        self.weapon = Weapon.load_starting_weapon(self.assets)
         self.target.clear_stage()
         self.smoke = SmokeSystem()
 
@@ -96,6 +104,11 @@ class Game:
         self.pending_shot_delay = 0.0
         self.pending_shot_start_delay = 0.0
         self.pending_trigger_speed = 0.0
+
+        for weapon in self.weapon_catalog.values():
+            weapon.reset_runtime_state(clean_barrel=True)
+
+        self.weapon = self.weapon_catalog[self.current_weapon_id]
 
         self.message = "Nouveau parcours : 25 m."
         self.message_time = 1.5
@@ -137,8 +150,19 @@ class Game:
                     self.reset()
                     self.state = "playing"
 
+                elif self.state == "shop":
+                    if event.key == pygame.K_b:
+                        self.state = "playing"
+                        self.show_message("Retour au pas de tir.", 1.0)
+                    elif pygame.K_1 <= event.key <= pygame.K_9:
+                        index = event.key - pygame.K_1
+                        self.handle_shop_selection(index)
+
                 elif self.state == "playing":
-                    if event.key == pygame.K_r:
+                    if event.key == pygame.K_b:
+                        self.state = "shop"
+                        self.show_message("Boutique ouverte.", 1.0)
+                    elif event.key == pygame.K_r:
                         if self.weapon.start_reload():
                             self.show_message("Rechargement...", 0.8)
                         elif self.weapon.loaded:
@@ -157,9 +181,11 @@ class Game:
             self.update_breathing(dt)
             self.update_wind(dt)
 
-        self.weapon.update(dt)
+        if self.state != "shop":
+            self.weapon.update(dt)
+            self.update_pending_shot(dt)
+
         self.smoke.update(dt)
-        self.update_pending_shot(dt)
 
         if self.message_time > 0:
             self.message_time -= dt
@@ -241,6 +267,10 @@ class Game:
         self.weapon.apply_shot_feedback()
         self.fatigue = clamp(self.fatigue + 3.5, 0, 100)
 
+        reward = self.cash_reward_for_shot(shot)
+        self.money += reward
+        self.last_reward = reward
+
         muzzle = self.weapon.muzzle_screen_pos(aim)
         direction = aim - self.weapon.anchor_screen_pos()
         self.smoke.spawn(muzzle, direction)
@@ -255,14 +285,15 @@ class Game:
         self.pending_shot_start_delay = 0.0
         self.pending_trigger_speed = 0.0
 
+        reward_text = f" +${reward}" if reward > 0 else ""
         if shot.score >= 9:
-            self.show_message(f"Très beau coup : {shot.score} points.", 1.4)
+            self.show_message(f"Très beau coup : {shot.score} points.{reward_text}", 1.4)
         elif shot.score >= 6:
-            self.show_message(f"Impact correct : {shot.score} points.", 1.4)
+            self.show_message(f"Impact correct : {shot.score} points.{reward_text}", 1.4)
         elif shot.score >= 1:
-            self.show_message(f"Impact faible : {shot.score} point(s).", 1.4)
+            self.show_message(f"Impact faible : {shot.score} point(s).{reward_text}", 1.4)
         else:
-            self.show_message("Manqué.", 1.4)
+            self.show_message("Manqué. $0", 1.4)
 
         if len(self.stage_shots) >= self.shots_per_stage:
             if self.stage_index < len(self.stages) - 1:
@@ -271,6 +302,18 @@ class Game:
             else:
                 self.state = "game_over"
                 self.show_message("Parcours terminé. Entrée : recommencer.", 999)
+
+    def cash_reward_for_shot(self, shot: Shot) -> int:
+        if shot.score <= 0:
+            return 0
+
+        distance_multiplier = self.distance / 25
+        reward = int(shot.score * distance_multiplier * 3)
+
+        if shot.score == 10:
+            reward += int(5 * distance_multiplier)
+
+        return max(1, reward)
 
     def next_stage(self) -> None:
         self.stage_index += 1
@@ -294,6 +337,39 @@ class Game:
 
         self.show_message(f"Nouvelle distance : {self.distance} m.", 1.6)
         self.state = "playing"
+
+    def handle_shop_selection(self, index: int) -> None:
+        if index < 0 or index >= len(self.shop_weapon_ids):
+            return
+
+        weapon_id = self.shop_weapon_ids[index]
+        weapon = self.weapon_catalog[weapon_id]
+
+        if weapon_id in self.owned_weapon_ids:
+            self.equip_weapon(weapon_id)
+            return
+
+        if self.money < weapon.stats.price:
+            missing = weapon.stats.price - self.money
+            self.show_message(f"Pas assez d'argent. Il manque ${missing}.", 1.6)
+            return
+
+        self.money -= weapon.stats.price
+        self.owned_weapon_ids.add(weapon_id)
+        self.equip_weapon(weapon_id)
+        self.show_message(f"Acheté et équipé : {weapon.stats.name}.", 1.6)
+
+    def equip_weapon(self, weapon_id: str) -> None:
+        if weapon_id not in self.weapon_catalog:
+            return
+
+        self.current_weapon_id = weapon_id
+        self.weapon = self.weapon_catalog[weapon_id]
+        self.weapon.reset_runtime_state(clean_barrel=False)
+        self.pending_shot_delay = 0.0
+        self.pending_shot_start_delay = 0.0
+        self.pending_trigger_speed = 0.0
+        self.show_message(f"Équipé : {self.weapon.stats.name}.", 1.2)
 
     def current_sway(self) -> pygame.Vector2:
         keys = pygame.key.get_pressed()
@@ -342,7 +418,9 @@ class Game:
         else:
             self.ui.draw_hud(self.screen, self)
 
-        if self.state == "stage_done":
+        if self.state == "shop":
+            self.ui.draw_shop(self.screen, self)
+        elif self.state == "stage_done":
             self.ui.draw_stage_done(self.screen, self)
         elif self.state == "game_over":
             self.ui.draw_game_over(self.screen, self)
@@ -379,6 +457,9 @@ class Game:
         random.seed()
 
     def draw_crosshair(self) -> None:
+        if self.state == "shop":
+            return
+
         aim = self.current_aim_point()
 
         pygame.draw.circle(self.screen, BLACK, aim, 13, 2)
