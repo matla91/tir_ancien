@@ -55,15 +55,12 @@ class Game:
         self.owned_weapon_ids = {self.shop_weapon_ids[0]}
         self.current_weapon_id = self.shop_weapon_ids[0]
         self.weapon = self.weapon_catalog[self.current_weapon_id]
-
         self.shot_sound = self.assets.build_flintlock_shot_sound()
 
         self.money = 0
         self.last_reward = 0
-
         self.stages = STAGES_METERS[:]
         self.shots_per_stage = SHOTS_PER_STAGE
-
         self.state = "menu"
         self.stage_index = 0
 
@@ -81,7 +78,6 @@ class Game:
 
         self.wind = random.uniform(-0.8, 0.8)
         self.wind_target = self.wind
-
         self.time = 0.0
 
         self.pending_shot_delay = 0.0
@@ -141,9 +137,7 @@ class Game:
             weapon.reset_runtime_state(clean_barrel=True)
 
         self.weapon = self.weapon_catalog[self.current_weapon_id]
-
-        self.message = "Nouveau parcours : 25 m."
-        self.message_time = 1.5
+        self.show_message("Nouveau parcours : 25 m.", 1.5)
 
     def show_message(self, text: str, duration: float = 1.4) -> None:
         self.message = text
@@ -151,7 +145,6 @@ class Game:
 
     def run(self) -> None:
         pygame.mouse.set_visible(False)
-
         while True:
             dt = self.clock.tick(FPS) / 1000.0
             self.handle_events()
@@ -162,10 +155,30 @@ class Game:
         pygame.quit()
         sys.exit()
 
+    def handle_primary_fire_input(self) -> None:
+        """Centralise le clic gauche pour qu'il fonctionne aussi avec Espace maintenu.
+
+        On déclenche le tir depuis MOUSEBUTTONDOWN ET depuis le polling souris.
+        Certaines configurations Windows/trackpad/clavier perdent le rising edge du
+        clic quand une touche comme Espace est maintenue. Cette méthode unique évite
+        les doublons : try_fire ignore déjà les tirs impossibles ou en cours.
+        """
+        if self.state == "menu":
+            self.state = "playing"
+            self.show_message("25 m : série de 5 coups.", 1.5)
+        elif self.state == "playing":
+            self.try_fire()
+
     def handle_events(self) -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.quit()
+
+            # Important : le tir est traité ici aussi, pas seulement par polling.
+            # Cela corrige le cas où le clic gauche n'est pas détecté correctement
+            # pendant que le joueur maintient Espace pour contrôler la respiration.
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self.handle_primary_fire_input()
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
@@ -187,8 +200,7 @@ class Game:
                         self.state = "playing"
                         self.show_message("Retour au pas de tir.", 1.0)
                     elif pygame.K_1 <= event.key <= pygame.K_9:
-                        index = event.key - pygame.K_1
-                        self.handle_shop_selection(index)
+                        self.handle_shop_selection(event.key - pygame.K_1)
 
                 elif self.state == "playing":
                     if event.key == pygame.K_b:
@@ -205,7 +217,6 @@ class Game:
 
     def update(self, dt: float) -> None:
         self.time += dt
-
         self.update_mouse()
         self.update_click_polling()
 
@@ -235,11 +246,7 @@ class Game:
     def update_click_polling(self) -> None:
         left_down = pygame.mouse.get_pressed(num_buttons=3)[0]
         if left_down and not self.prev_left_down:
-            if self.state == "menu":
-                self.state = "playing"
-                self.show_message("25 m : série de 5 coups.", 1.5)
-            elif self.state == "playing":
-                self.try_fire()
+            self.handle_primary_fire_input()
         self.prev_left_down = left_down
 
     def update_breathing(self, dt: float) -> None:
@@ -267,8 +274,6 @@ class Game:
         if not holding:
             return 0.35
 
-        # Fenêtre volontairement claire : trop tôt = pas encore stabilisé,
-        # trop long = tremblement d'apnée/fatigue.
         if self.breath_hold_time < 0.35:
             hold_quality = self.breath_hold_time / 0.35
         elif self.breath_hold_time <= 2.10:
@@ -280,7 +285,6 @@ class Game:
         return clamp(hold_quality * breath_amount_quality, 0.0, 1.0)
 
     def motion_quality(self) -> float:
-        # Tirer en déplaçant vite la souris doit coûter cher.
         return clamp(1.0 - self.mouse_speed / 980.0, 0.0, 1.0)
 
     def stability_score(self) -> float:
@@ -332,7 +336,6 @@ class Game:
             return
         if self.weapon.reloading or self.weapon.cleaning:
             return
-
         if not self.weapon.loaded:
             self.show_message("Arme vide : R pour recharger.", 1.2)
             return
@@ -364,7 +367,6 @@ class Game:
         dispersion = self.weapon.dispersion_px(self.distance, self.fatigue, trigger_penalty)
         dx = random.gauss(0, dispersion)
         dy = random.gauss(0, dispersion)
-
         wind_offset = self.wind * (self.distance / 100) * 12.0
         impact = pygame.Vector2(aim.x + dx + wind_offset, aim.y + dy)
 
@@ -387,7 +389,6 @@ class Game:
         floating_color = YELLOW if reward > 0 else (220, 220, 220)
         floating_text = f"{shot.score} pts  +${reward}" if reward > 0 else f"{shot.score} pts"
         self.floating_text.spawn(floating_text, pygame.Vector2(shot.x + 18, shot.y - 28), floating_color)
-
         self.start_camera_shake(strength=11.0 if shot.score >= 8 else 8.0, duration=0.22)
 
         if self.shot_sound:
@@ -422,18 +423,14 @@ class Game:
     def cash_reward_for_shot(self, shot: Shot) -> int:
         if shot.score <= 0:
             return 0
-
         distance_multiplier = self.distance / 25
         reward = int(shot.score * distance_multiplier * 3)
-
         if shot.score == 10:
             reward += int(5 * distance_multiplier)
-
         return max(1, reward)
 
     def next_stage(self) -> None:
         self.stage_index += 1
-
         self.stage_shots.clear()
         self.target.clear_stage()
         self.floating_text = FloatingTextSystem()
@@ -450,7 +447,6 @@ class Game:
 
         self.wind = random.uniform(-0.9, 0.9)
         self.wind_target = self.wind
-
         self.pending_shot_delay = 0.0
         self.pending_shot_start_delay = 0.0
 
@@ -481,7 +477,6 @@ class Game:
     def equip_weapon(self, weapon_id: str) -> None:
         if weapon_id not in self.weapon_catalog:
             return
-
         self.current_weapon_id = weapon_id
         self.weapon = self.weapon_catalog[weapon_id]
         self.weapon.reset_runtime_state(clean_barrel=False)
@@ -494,7 +489,6 @@ class Game:
     def current_sway(self) -> pygame.Vector2:
         keys = pygame.key.get_pressed()
         holding_breath = keys[pygame.K_SPACE] and self.breath > 0 and self.state == "playing"
-
         distance_factor = (self.distance / 25) ** 0.5
         stability_factor = clamp(1.25 - self.weapon.stats.stability / 100.0, 0.35, 1.25)
 
@@ -507,13 +501,10 @@ class Game:
                 amp *= 1.0 - 0.35 * (self.breath_hold_time / 0.35)
             elif self.breath_hold_time > 2.10:
                 amp *= 1.0 + clamp((self.breath_hold_time - 2.10) / 1.15, 0.0, 1.25)
-        else:
-            amp *= 1.0
 
         if self.breath <= 3 and keys[pygame.K_SPACE]:
             amp *= 1.85
 
-        # Mouvement plus organique : lent + micro-tremblement en fin d'apnée.
         micro = 1.0
         if holding_breath and self.breath_hold_time > 2.10:
             micro += clamp((self.breath_hold_time - 2.10) / 1.2, 0.0, 1.0)
@@ -528,7 +519,6 @@ class Game:
             + math.sin(self.time * 2.22 + 2.1) * 0.30
             + math.cos(self.time * 6.30) * 0.09 * micro
         )
-
         return pygame.Vector2(sx * amp, sy * amp)
 
     def current_aim_point(self) -> pygame.Vector2:
@@ -566,7 +556,6 @@ class Game:
 
     def draw_background(self, surface: pygame.Surface) -> None:
         surface.fill(FOREST_DARK)
-
         pygame.draw.rect(surface, (132, 162, 178), (0, 0, WIDTH, 140))
 
         for i in range(0, WIDTH, 38):
@@ -575,10 +564,8 @@ class Game:
             pygame.draw.polygon(surface, color, [(i - 30, 155), (i + 18, 155 - h), (i + 66, 155)])
 
         pygame.draw.polygon(surface, SAND, [(0, 250), (WIDTH, 220), (WIDTH, HEIGHT), (0, HEIGHT)])
-
         pygame.draw.ellipse(surface, SAND_DARK, (WIDTH * 0.40, 135, 500, 210))
         pygame.draw.ellipse(surface, SAND, (WIDTH * 0.43, 155, 430, 155))
-
         pygame.draw.polygon(
             surface,
             (185, 151, 94),
@@ -606,12 +593,10 @@ class Game:
 
         aim = self.current_aim_point()
         color = self.crosshair_color()
-
-        # Cercle de stabilité : grand et rouge = mauvais, petit et vert = fenêtre correcte.
         stability_radius = clamp(10 + (1.0 - self.last_stability_score) * 54 + self.mouse_speed * 0.010, 12, 72)
+
         pygame.draw.circle(surface, color, aim, int(stability_radius), 2)
         pygame.draw.circle(surface, BLACK, aim, int(stability_radius) + 2, 1)
-
         pygame.draw.circle(surface, color, aim, 13, 2)
         pygame.draw.circle(surface, WHITE, aim, 3)
         pygame.draw.line(surface, color, (aim.x - 28, aim.y), (aim.x - 9, aim.y), 3)
