@@ -20,14 +20,15 @@ class Target:
     def __init__(self) -> None:
         self.shots: List[Shot] = []
 
-    def center(self) -> pygame.Vector2:
-        return pygame.Vector2(WIDTH * 0.58, HEIGHT * 0.34)
+    def center(self, distance_m: int = 25) -> pygame.Vector2:
+        t = clamp((distance_m - 25) / 175, 0, 1)
+        return pygame.Vector2(WIDTH * (0.58 + 0.035 * t), HEIGHT * (0.36 - 0.075 * t))
 
     def radius(self, distance_m: int) -> float:
         return clamp(126 * (25 / distance_m) ** 0.42, 34, 126)
 
     def score_impact(self, impact: pygame.Vector2, distance_m: int) -> Shot:
-        center = self.center()
+        center = self.center(distance_m)
         radius = self.radius(distance_m)
         error = impact.distance_to(center)
         normalized = error / radius
@@ -47,7 +48,7 @@ class Target:
         self.shots.clear()
 
     def draw(self, surface: pygame.Surface, distance_m: int) -> None:
-        center = self.center()
+        center = self.center(distance_m)
         radius = self.radius(distance_m)
 
         pygame.draw.line(surface, WOOD, (center.x - radius * 0.85, center.y + radius), (center.x - radius * 1.15, center.y + radius + 150), 6)
