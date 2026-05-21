@@ -39,11 +39,13 @@ class UI:
         stage_total = sum(s.score for s in game.stage_shots)
         shots_left = game.shots_per_stage - len(game.stage_shots)
         weapon = game.weapon
+        target = game.target.target_type
 
         y = 18
         lines = [
             f"Argent : ${game.money}",
             f"Arme : {weapon.stats.name}",
+            f"Cible : {target.name}",
             f"Distance : {game.distance} m",
             f"Série : {len(game.stage_shots)}/{game.shots_per_stage} coups",
             f"Coups restants : {shots_left}",
@@ -59,25 +61,25 @@ class UI:
         for line in lines:
             txt = self.font.render(line, True, WHITE)
             surface.blit(txt, (20, y))
-            y += 28
+            y += 26
 
         breath_color = GREEN if game.breath > 25 else YELLOW
         self.draw_bar(surface, 20, y + 6, 290, 22, game.breath / 100, "Respiration", breath_color)
-        y += 44
+        y += 42
 
         if weapon.reloading:
             self.draw_bar(surface, 20, y, 290, 22, weapon.reload_progress, "Rechargement", (40, 72, 128))
-            y += 36
+            y += 34
 
         if weapon.cleaning:
             self.draw_bar(surface, 20, y, 290, 22, weapon.clean_progress, "Nettoyage", YELLOW)
-            y += 36
+            y += 34
 
         if game.pending_shot_delay > 0:
             self.draw_bar(surface, 20, y, 290, 22, 1.0 - game.pending_shot_delay / max(game.pending_shot_start_delay, 0.01), "Allumage", (176, 35, 32))
-            y += 36
+            y += 34
 
-        y += 10
+        y += 6
         controls = [
             "Souris : viser",
             "Clic gauche / F / Ctrl : tirer",
@@ -91,7 +93,7 @@ class UI:
         for control in controls:
             txt = self.small.render(control, True, WHITE)
             surface.blit(txt, (20, y))
-            y += 22
+            y += 20
 
         if game.message_time > 0:
             msg = self.font.render(game.message, True, YELLOW)
@@ -112,9 +114,9 @@ class UI:
 
         tips = [
             "Arme de départ : pistolet à silex de type Kentucky/Pennsylvania.",
+            "Cible de départ : cible papier de précision, pas cible d'arc.",
             "Plus la cible est loin, plus chaque point rapporte d'argent.",
             "Appuie sur B pendant le jeu pour ouvrir la boutique.",
-            "Le silex crée un léger délai : garde la visée après le clic.",
         ]
 
         y = 425
@@ -128,63 +130,106 @@ class UI:
         overlay.fill((0, 0, 0, 178))
         surface.blit(overlay, (0, 0))
 
-        title = self.big.render("Boutique d'armes", True, WHITE)
+        title = self.big.render("Boutique", True, WHITE)
         money = self.font.render(f"Argent disponible : ${game.money}", True, YELLOW)
         hint = self.font.render("Touches 1-9 : acheter ou équiper | B : retour au pas de tir", True, WHITE)
 
-        surface.blit(title, (WIDTH / 2 - title.get_width() / 2, 70))
-        surface.blit(money, (WIDTH / 2 - money.get_width() / 2, 125))
-        surface.blit(hint, (WIDTH / 2 - hint.get_width() / 2, 165))
+        surface.blit(title, (WIDTH / 2 - title.get_width() / 2, 36))
+        surface.blit(money, (WIDTH / 2 - money.get_width() / 2, 86))
+        surface.blit(hint, (WIDTH / 2 - hint.get_width() / 2, 120))
 
         start_x = 245
-        start_y = 225
-        card_w = 720
-        card_h = 88
+        y = 165
+        card_w = 760
+        card_h = 62
+
+        section = self.font.render("Armes", True, YELLOW)
+        surface.blit(section, (start_x, y))
+        y += 30
 
         for index, weapon_id in enumerate(game.shop_weapon_ids):
             weapon = game.weapon_catalog[weapon_id]
             owned = weapon_id in game.owned_weapon_ids
             equipped = weapon_id == game.current_weapon_id
-
-            y = start_y + index * (card_h + 14)
             rect = pygame.Rect(start_x, y, card_w, card_h)
+            self.draw_weapon_card(surface, rect, index + 1, weapon, owned, equipped, game.money)
+            y += card_h + 8
 
-            bg = (38, 38, 38) if not equipped else (46, 64, 46)
-            border = YELLOW if equipped else WHITE
+        y += 6
+        section = self.font.render("Cibles", True, YELLOW)
+        surface.blit(section, (start_x, y))
+        y += 30
 
-            pygame.draw.rect(surface, bg, rect, border_radius=8)
-            pygame.draw.rect(surface, border, rect, 2, border_radius=8)
+        base_index = len(game.shop_weapon_ids)
+        target_card_h = 58
+        for index, target_id in enumerate(game.shop_target_ids):
+            target = game.target.target_type if target_id == game.current_target_id else game.target.TARGET_CATALOG[target_id] if hasattr(game.target, 'TARGET_CATALOG') else None
+            target = game.target.__class__.__mro__[0]
 
-            key_text = self.font.render(f"{index + 1}", True, YELLOW)
-            surface.blit(key_text, (rect.x + 16, rect.y + 16))
+        # Keep target catalog access simple and explicit from game state.
+        for index, target_id in enumerate(game.shop_target_ids):
+            target = game.target.target_type if target_id == game.current_target_id else None
+            if target is None:
+                from src.target import TARGET_CATALOG
+                target = TARGET_CATALOG[target_id]
+            owned = target_id in game.owned_target_ids
+            equipped = target_id == game.current_target_id
+            rect = pygame.Rect(start_x, y, card_w, target_card_h)
+            self.draw_target_card(surface, rect, base_index + index + 1, target, owned, equipped, game.money)
+            y += target_card_h + 8
 
-            name = self.font.render(weapon.stats.name, True, WHITE)
-            surface.blit(name, (rect.x + 55, rect.y + 12))
+    def draw_weapon_card(self, surface, rect, key_number, weapon, owned, equipped, money) -> None:
+        bg = (38, 38, 38) if not equipped else (46, 64, 46)
+        border = YELLOW if equipped else WHITE
+        pygame.draw.rect(surface, bg, rect, border_radius=8)
+        pygame.draw.rect(surface, border, rect, 2, border_radius=8)
 
-            desc = self.small.render(weapon.stats.description, True, (220, 220, 220))
-            surface.blit(desc, (rect.x + 55, rect.y + 42))
+        key_text = self.font.render(f"{key_number}", True, YELLOW)
+        surface.blit(key_text, (rect.x + 16, rect.y + 10))
+        name = self.font.render(weapon.stats.name, True, WHITE)
+        surface.blit(name, (rect.x + 55, rect.y + 7))
+        desc = self.small.render(weapon.stats.description, True, (220, 220, 220))
+        surface.blit(desc, (rect.x + 55, rect.y + 34))
 
-            stats = (
-                f"Précision {weapon.stats.precision:.0f} | "
-                f"Stabilité {weapon.stats.stability:.0f} | "
-                f"Recharge {weapon.stats.reload_time:.1f}s | "
-                f"Portée efficace {weapon.stats.effective_range} m"
-            )
-            stats_img = self.small.render(stats, True, (205, 205, 205))
-            surface.blit(stats_img, (rect.x + 55, rect.y + 63))
+        if equipped:
+            status = "ÉQUIPÉ"
+            color = GREEN
+        elif owned:
+            status = "POSSÉDÉ"
+            color = WHITE
+        else:
+            status = f"${weapon.stats.price}"
+            color = YELLOW if money >= weapon.stats.price else (205, 95, 95)
+        status_img = self.font.render(status, True, color)
+        surface.blit(status_img, (rect.right - status_img.get_width() - 22, rect.y + 18))
 
-            if equipped:
-                status = "ÉQUIPÉ"
-                color = GREEN
-            elif owned:
-                status = "POSSÉDÉ"
-                color = WHITE
-            else:
-                status = f"${weapon.stats.price}"
-                color = YELLOW if game.money >= weapon.stats.price else (205, 95, 95)
+    def draw_target_card(self, surface, rect, key_number, target, owned, equipped, money) -> None:
+        bg = (38, 38, 38) if not equipped else (46, 54, 68)
+        border = YELLOW if equipped else WHITE
+        pygame.draw.rect(surface, bg, rect, border_radius=8)
+        pygame.draw.rect(surface, border, rect, 2, border_radius=8)
 
-            status_img = self.font.render(status, True, color)
-            surface.blit(status_img, (rect.right - status_img.get_width() - 22, rect.y + 30))
+        key_text = self.font.render(f"{key_number}", True, YELLOW)
+        surface.blit(key_text, (rect.x + 16, rect.y + 8))
+        name = self.font.render(target.name, True, WHITE)
+        surface.blit(name, (rect.x + 55, rect.y + 5))
+        desc = self.small.render(target.description, True, (220, 220, 220))
+        surface.blit(desc, (rect.x + 55, rect.y + 30))
+
+        bonus = self.small.render(f"{target.difficulty} | gains x{target.reward_multiplier:.2f}", True, (205, 205, 205))
+        surface.blit(bonus, (rect.x + 445, rect.y + 32))
+
+        if equipped:
+            status = "ÉQUIPÉE"
+            color = GREEN
+        elif owned:
+            status = "POSSÉDÉE"
+            color = WHITE
+        else:
+            status = f"${target.price}"
+            color = YELLOW if money >= target.price else (205, 95, 95)
+        status_img = self.font.render(status, True, color)
+        surface.blit(status_img, (rect.right - status_img.get_width() - 22, rect.y + 16))
 
     def draw_stage_done(self, surface: pygame.Surface, game) -> None:
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
