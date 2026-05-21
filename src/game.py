@@ -12,11 +12,14 @@ from src.settings import (
     FOREST,
     FOREST_DARK,
     FPS,
+    GREEN,
     HEIGHT,
+    RED,
     SAND,
     SAND_DARK,
     SHOTS_PER_STAGE,
     STAGES_METERS,
+    WHITE,
     WIDTH,
     YELLOW,
 )
@@ -73,6 +76,7 @@ class Game:
         self.prev_left_down = False
 
         self.breath = 100.0
+        self.breath_hold_time = 0.0
         self.fatigue = 0.0
 
         self.wind = random.uniform(-0.8, 0.8)
@@ -83,6 +87,12 @@ class Game:
         self.pending_shot_delay = 0.0
         self.pending_shot_start_delay = 0.0
         self.pending_trigger_speed = 0.0
+
+        self.last_stability_score = 0.0
+        self.last_breath_quality = 0.0
+        self.last_motion_quality = 0.0
+        self.last_trigger_quality = 0.0
+        self.last_aim_rating = "Instable"
 
         self.shake_time = 0.0
         self.shake_duration = 0.0
@@ -107,7 +117,13 @@ class Game:
         self.stage_shots.clear()
 
         self.breath = 100.0
+        self.breath_hold_time = 0.0
         self.fatigue = 0.0
+        self.last_stability_score = 0.0
+        self.last_breath_quality = 0.0
+        self.last_motion_quality = 0.0
+        self.last_trigger_quality = 0.0
+        self.last_aim_rating = "Instable"
 
         self.wind = random.uniform(-0.8, 0.8)
         self.wind_target = self.wind
@@ -196,6 +212,7 @@ class Game:
         if self.state == "playing":
             self.update_breathing(dt)
             self.update_wind(dt)
+            self.update_aim_feedback()
 
         if self.state != "shop":
             self.weapon.update(dt)
@@ -230,9 +247,11 @@ class Game:
         breath_control = keys[pygame.K_SPACE] and not self.weapon.reloading and not self.weapon.cleaning
 
         if breath_control and self.breath > 0:
+            self.breath_hold_time += dt
             self.breath = clamp(self.breath - 24 * dt, 0, 100)
             self.fatigue = clamp(self.fatigue + 2.8 * dt, 0, 100)
         else:
+            self.breath_hold_time = 0.0
             recovery = 16 if not self.weapon.reloading and not self.weapon.cleaning else 7
             self.breath = clamp(self.breath + recovery * dt, 0, 100)
             self.fatigue = clamp(self.fatigue - 4.5 * dt, 0, 100)
@@ -241,6 +260,57 @@ class Game:
         if random.random() < 0.008:
             self.wind_target = random.uniform(-1.1, 1.1)
         self.wind = lerp(self.wind, self.wind_target, 0.35 * dt)
+
+    def breath_quality(self) -> float:
+        keys = pygame.key.get_pressed()
+        holding = keys[pygame.K_SPACE] and self.breath > 0 and self.state == "playing"
+        if not holding:
+            return 0.35
+
+        # Fenêtre volontairement claire : trop tôt = pas encore stabilisé,
+        # trop long = tremblement d'apnée/fatigue.
+        if self.breath_hold_time < 0.35:
+            hold_quality = self.breath_hold_time / 0.35
+        elif self.breath_hold_time <= 2.10:
+            hold_quality = 1.0
+        else:
+            hold_quality = clamp(1.0 - (self.breath_hold_time - 2.10) / 1.55, 0.0, 1.0)
+
+        breath_amount_quality = clamp((self.breath - 8.0) / 35.0, 0.0, 1.0)
+        return clamp(hold_quality * breath_amount_quality, 0.0, 1.0)
+
+    def motion_quality(self) -> float:
+        # Tirer en déplaçant vite la souris doit coûter cher.
+        return clamp(1.0 - self.mouse_speed / 980.0, 0.0, 1.0)
+
+    def stability_score(self) -> float:
+        sway = self.current_sway().length()
+        sway_quality = clamp(1.0 - sway / 42.0, 0.0, 1.0)
+        breath = self.breath_quality()
+        motion = self.motion_quality()
+        fouling_quality = clamp(1.0 - self.weapon.fouling / 14.0, 0.0, 1.0)
+        fatigue_quality = clamp(1.0 - self.fatigue / 120.0, 0.0, 1.0)
+        return clamp(
+            0.42 * sway_quality
+            + 0.24 * breath
+            + 0.20 * motion
+            + 0.08 * fouling_quality
+            + 0.06 * fatigue_quality,
+            0.0,
+            1.0,
+        )
+
+    def update_aim_feedback(self) -> None:
+        self.last_breath_quality = self.breath_quality()
+        self.last_motion_quality = self.motion_quality()
+        self.last_stability_score = self.stability_score()
+
+        if self.last_stability_score >= 0.78:
+            self.last_aim_rating = "Stable"
+        elif self.last_stability_score >= 0.52:
+            self.last_aim_rating = "Correct"
+        else:
+            self.last_aim_rating = "Instable"
 
     def start_camera_shake(self, strength: float = 9.0, duration: float = 0.20) -> None:
         self.shake_strength = max(self.shake_strength, strength)
@@ -267,10 +337,12 @@ class Game:
             self.show_message("Arme vide : R pour recharger.", 1.2)
             return
 
+        self.update_aim_feedback()
         delay = self.weapon.random_shot_delay()
         self.pending_shot_delay = delay
         self.pending_shot_start_delay = delay
         self.pending_trigger_speed = self.mouse_speed
+        self.last_trigger_quality = self.last_stability_score
 
         self.weapon.loaded = False
         self.show_message("Départ du coup...", 0.35)
@@ -285,7 +357,9 @@ class Game:
 
     def finish_fire(self) -> None:
         aim = self.current_aim_point()
-        trigger_penalty = clamp(self.pending_trigger_speed / 900.0, 0.0, 1.0)
+        speed_penalty = clamp(self.pending_trigger_speed / 900.0, 0.0, 1.0)
+        stability_penalty = 1.0 - clamp(self.last_trigger_quality, 0.0, 1.0)
+        trigger_penalty = clamp(0.55 * speed_penalty + 0.45 * stability_penalty, 0.0, 1.0)
 
         dispersion = self.weapon.dispersion_px(self.distance, self.fatigue, trigger_penalty)
         dx = random.gauss(0, dispersion)
@@ -327,14 +401,15 @@ class Game:
         self.pending_trigger_speed = 0.0
 
         reward_text = f" +${reward}" if reward > 0 else ""
+        aim_text = f" | {self.last_aim_rating}"
         if shot.score >= 9:
-            self.show_message(f"Très beau coup : {shot.score} points.{reward_text}", 1.4)
+            self.show_message(f"Très beau coup : {shot.score} points.{reward_text}{aim_text}", 1.4)
         elif shot.score >= 6:
-            self.show_message(f"Impact correct : {shot.score} points.{reward_text}", 1.4)
+            self.show_message(f"Impact correct : {shot.score} points.{reward_text}{aim_text}", 1.4)
         elif shot.score >= 1:
-            self.show_message(f"Impact faible : {shot.score} point(s).{reward_text}", 1.4)
+            self.show_message(f"Impact faible : {shot.score} point(s).{reward_text}{aim_text}", 1.4)
         else:
-            self.show_message("Manqué. $0", 1.4)
+            self.show_message(f"Manqué. $0{aim_text}", 1.4)
 
         if len(self.stage_shots) >= self.shots_per_stage:
             if self.stage_index < len(self.stages) - 1:
@@ -370,6 +445,7 @@ class Game:
         self.weapon.fouling = clamp(self.weapon.fouling * 0.25, 0, 10)
 
         self.breath = 100.0
+        self.breath_hold_time = 0.0
         self.fatigue = clamp(self.fatigue * 0.35, 0, 100)
 
         self.wind = random.uniform(-0.9, 0.9)
@@ -412,6 +488,7 @@ class Game:
         self.pending_shot_delay = 0.0
         self.pending_shot_start_delay = 0.0
         self.pending_trigger_speed = 0.0
+        self.breath_hold_time = 0.0
         self.show_message(f"Équipé : {self.weapon.stats.name}.", 1.2)
 
     def current_sway(self) -> pygame.Vector2:
@@ -425,20 +502,31 @@ class Game:
         amp *= stability_factor
 
         if holding_breath:
-            amp *= 0.36
+            amp *= 0.34
+            if self.breath_hold_time < 0.35:
+                amp *= 1.0 - 0.35 * (self.breath_hold_time / 0.35)
+            elif self.breath_hold_time > 2.10:
+                amp *= 1.0 + clamp((self.breath_hold_time - 2.10) / 1.15, 0.0, 1.25)
+        else:
+            amp *= 1.0
 
         if self.breath <= 3 and keys[pygame.K_SPACE]:
             amp *= 1.85
 
+        # Mouvement plus organique : lent + micro-tremblement en fin d'apnée.
+        micro = 1.0
+        if holding_breath and self.breath_hold_time > 2.10:
+            micro += clamp((self.breath_hold_time - 2.10) / 1.2, 0.0, 1.0)
+
         sx = (
-            math.sin(self.time * 1.35) * 0.80
-            + math.sin(self.time * 2.75 + 1.4) * 0.32
-            + math.sin(self.time * 5.10 + 0.3) * 0.12
+            math.sin(self.time * 1.18) * 0.84
+            + math.sin(self.time * 2.55 + 1.4) * 0.30
+            + math.sin(self.time * 6.90 + 0.3) * 0.08 * micro
         )
         sy = (
-            math.cos(self.time * 1.15 + 0.7) * 0.72
-            + math.sin(self.time * 2.40 + 2.1) * 0.30
-            + math.cos(self.time * 4.60) * 0.14
+            math.cos(self.time * 1.05 + 0.7) * 0.76
+            + math.sin(self.time * 2.22 + 2.1) * 0.30
+            + math.cos(self.time * 6.30) * 0.09 * micro
         )
 
         return pygame.Vector2(sx * amp, sy * amp)
@@ -505,17 +593,35 @@ class Game:
             pygame.draw.circle(surface, (130, 105, 73), (x, y), r)
         random.seed()
 
+    def crosshair_color(self) -> tuple[int, int, int]:
+        if self.last_stability_score >= 0.78:
+            return GREEN
+        if self.last_stability_score >= 0.52:
+            return YELLOW
+        return RED
+
     def draw_crosshair(self, surface: pygame.Surface) -> None:
         if self.state == "shop":
             return
 
         aim = self.current_aim_point()
+        color = self.crosshair_color()
 
-        pygame.draw.circle(surface, BLACK, aim, 13, 2)
-        pygame.draw.line(surface, BLACK, (aim.x - 24, aim.y), (aim.x - 8, aim.y), 2)
-        pygame.draw.line(surface, BLACK, (aim.x + 8, aim.y), (aim.x + 24, aim.y), 2)
-        pygame.draw.line(surface, BLACK, (aim.x, aim.y - 24), (aim.x, aim.y - 8), 2)
-        pygame.draw.line(surface, BLACK, (aim.x, aim.y + 8), (aim.x, aim.y + 24), 2)
+        # Cercle de stabilité : grand et rouge = mauvais, petit et vert = fenêtre correcte.
+        stability_radius = clamp(10 + (1.0 - self.last_stability_score) * 54 + self.mouse_speed * 0.010, 12, 72)
+        pygame.draw.circle(surface, color, aim, int(stability_radius), 2)
+        pygame.draw.circle(surface, BLACK, aim, int(stability_radius) + 2, 1)
 
-        stability_radius = clamp(6 + self.current_sway().length() * 0.8 + self.mouse_speed * 0.015, 8, 58)
-        pygame.draw.circle(surface, (30, 30, 30), aim, stability_radius, 1)
+        pygame.draw.circle(surface, color, aim, 13, 2)
+        pygame.draw.circle(surface, WHITE, aim, 3)
+        pygame.draw.line(surface, color, (aim.x - 28, aim.y), (aim.x - 9, aim.y), 3)
+        pygame.draw.line(surface, color, (aim.x + 9, aim.y), (aim.x + 28, aim.y), 3)
+        pygame.draw.line(surface, color, (aim.x, aim.y - 28), (aim.x, aim.y - 9), 3)
+        pygame.draw.line(surface, color, (aim.x, aim.y + 9), (aim.x, aim.y + 28), 3)
+
+        label = f"{self.last_aim_rating} {int(self.last_stability_score * 100)}%"
+        font = pygame.font.SysFont("arial", 16, bold=True)
+        text = font.render(label, True, color)
+        shadow = font.render(label, True, BLACK)
+        surface.blit(shadow, (aim.x + 18, aim.y + 18))
+        surface.blit(text, (aim.x + 16, aim.y + 16))
