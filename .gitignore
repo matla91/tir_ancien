@@ -10,3 +10,13 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Local raw recordings used to build final game sounds
+assets/sounds/*.mp4
+assets/sounds/*_raw.wav
+assets/sounds/*_cut.wav
+assets/sounds/*_processed.wav
+
+# Keep final exported game audio assets
+!assets/sounds/flintlock_shot.ogg
+!assets/sounds/flintlock_shot.wav
