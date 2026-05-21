@@ -6,11 +6,10 @@ from src.utils import clamp
 
 
 def apply_breath_toggle_patch(GameClass) -> None:
-    """Switch breath control from hold-to-breathe to toggle-to-breathe.
+    """Use hold-to-breathe without blocking the trigger.
 
-    Space toggles breath control in shooting mode. While breath control is active,
-    firing is still handled independently through mouse polling and keyboard polling
-    so the trigger is never blocked by the breathing state.
+    Space or right mouse button must be held to control breathing. Trigger input
+    remains independent, so left click / F / Ctrl can fire while breathing is held.
     """
 
     original_init = GameClass.__init__
@@ -38,23 +37,6 @@ def apply_breath_toggle_patch(GameClass) -> None:
         self.trigger_input_locked = False
         return original_equip_weapon(self, *args, **kwargs)
 
-    def toggle_breath_control(self) -> None:
-        if self.weapon.reloading or self.weapon.cleaning:
-            self.breath_control_active = False
-            self.show_message("Respiration impossible pendant cette action.", 0.9)
-            return
-
-        if self.breath <= 3:
-            self.breath_control_active = False
-            self.show_message("Souffle épuisé.", 0.9)
-            return
-
-        self.breath_control_active = not self.breath_control_active
-        if self.breath_control_active:
-            self.show_message("Respiration contrôlée.", 0.8)
-        else:
-            self.show_message("Respiration relâchée.", 0.8)
-
     def fire_from_trigger_input(self) -> None:
         """Fire once from any trigger input, regardless of breathing state."""
         if self.state == "menu":
@@ -73,15 +55,17 @@ def apply_breath_toggle_patch(GameClass) -> None:
             if event.type == pygame.QUIT:
                 self.quit()
 
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.state == "shop":
-                    self.handle_shop_click(event.pos)
-                else:
-                    self.fire_from_trigger_input()
-                    self.trigger_input_locked = True
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    if self.state == "shop":
+                        self.handle_shop_click(event.pos)
+                    else:
+                        self.fire_from_trigger_input()
+                        self.trigger_input_locked = True
 
-            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                self.trigger_input_locked = False
+            if event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    self.trigger_input_locked = False
 
             if event.type == pygame.MOUSEMOTION and self.state == "shop":
                 hovered = self.shop_index_from_pos(event.pos)
@@ -124,9 +108,7 @@ def apply_breath_toggle_patch(GameClass) -> None:
                         self.handle_shop_selection(event.key - pygame.K_1)
 
                 elif self.state == "playing":
-                    if event.key == pygame.K_SPACE:
-                        self.toggle_breath_control()
-                    elif event.key in (pygame.K_f, pygame.K_LCTRL, pygame.K_RCTRL):
+                    if event.key in (pygame.K_f, pygame.K_LCTRL, pygame.K_RCTRL):
                         self.fire_from_trigger_input()
                         self.trigger_input_locked = True
                     elif event.key == pygame.K_b:
@@ -146,7 +128,8 @@ def apply_breath_toggle_patch(GameClass) -> None:
                             self.show_message("Nettoyage du canon...", 0.8)
 
     def patched_update_click_polling(self) -> None:
-        mouse_left = pygame.mouse.get_pressed(num_buttons=3)[0]
+        mouse_buttons = pygame.mouse.get_pressed(num_buttons=3)
+        mouse_left = mouse_buttons[0]
         keys = pygame.key.get_pressed()
         keyboard_trigger = keys[pygame.K_f] or keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]
         trigger_down = mouse_left or keyboard_trigger
@@ -157,8 +140,7 @@ def apply_breath_toggle_patch(GameClass) -> None:
                 self.trigger_input_locked = False
             return
 
-        # This is the important part: trigger input is checked independently from
-        # Space/breathing. Even if breath_control_active is True, the shot can start.
+        # Trigger input is completely independent from Space/right click breathing.
         if trigger_down and not self.trigger_input_locked:
             self.fire_from_trigger_input()
             self.trigger_input_locked = True
@@ -169,19 +151,21 @@ def apply_breath_toggle_patch(GameClass) -> None:
         self.prev_left_down = mouse_left
 
     def patched_update_breathing(self, dt: float) -> None:
-        if self.breath_control_active and (self.weapon.reloading or self.weapon.cleaning):
-            self.breath_control_active = False
-
-        if self.breath_control_active and self.breath <= 0:
-            self.breath_control_active = False
-            self.show_message("Souffle épuisé.", 0.9)
+        keys = pygame.key.get_pressed()
+        mouse_buttons = pygame.mouse.get_pressed(num_buttons=3)
+        holding_breath_input = keys[pygame.K_SPACE] or mouse_buttons[2]
 
         breath_control = (
-            self.breath_control_active
+            self.state == "playing"
+            and holding_breath_input
             and self.breath > 0
             and not self.weapon.reloading
             and not self.weapon.cleaning
         )
+        self.breath_control_active = breath_control
+
+        if holding_breath_input and self.breath <= 0 and self.state == "playing":
+            self.show_message("Souffle épuisé.", 0.9)
 
         if breath_control:
             self.breath_hold_time += dt
@@ -246,7 +230,6 @@ def apply_breath_toggle_patch(GameClass) -> None:
     GameClass.reset = patched_reset
     GameClass.next_stage = patched_next_stage
     GameClass.equip_weapon = patched_equip_weapon
-    GameClass.toggle_breath_control = toggle_breath_control
     GameClass.fire_from_trigger_input = fire_from_trigger_input
     GameClass.handle_events = patched_handle_events
     GameClass.update_click_polling = patched_update_click_polling
