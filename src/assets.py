@@ -48,6 +48,7 @@ class AssetManager:
     def build_flintlock_shot_sound(self) -> Optional[pygame.mixer.Sound]:
         real_sound = self.sound("sounds/flintlock_shot.ogg") or self.sound("sounds/flintlock_shot.wav")
         if real_sound is not None:
+            real_sound.set_volume(0.82)
             return real_sound
 
         try:
@@ -71,13 +72,16 @@ class AssetManager:
                 value = int(clamp((noise * 0.70 + boom * 0.52 + low_tail * 0.22) * 27000, -32767, 32767))
                 samples.append(value)
 
-            return pygame.mixer.Sound(buffer=samples.tobytes())
+            sound = pygame.mixer.Sound(buffer=samples.tobytes())
+            sound.set_volume(0.82)
+            return sound
         except Exception:
             return None
 
     def build_target_hit_sound(self) -> Optional[pygame.mixer.Sound]:
         real_sound = self.sound("sounds/target_hit.ogg") or self.sound("sounds/target_hit.wav")
         if real_sound is not None:
+            real_sound.set_volume(1.0)
             return real_sound
 
         try:
@@ -99,9 +103,11 @@ class AssetManager:
                 paper = random.uniform(-1.0, 1.0) * paper_env
                 low = math.sin(2 * math.pi * 180 * t) * low_env
 
-                value = int(clamp((snap * 0.35 + paper * 0.24 + low * 0.18) * 18000, -32767, 32767))
+                value = int(clamp((snap * 0.50 + paper * 0.34 + low * 0.22) * 26000, -32767, 32767))
                 samples.append(value)
 
-            return pygame.mixer.Sound(buffer=samples.tobytes())
+            sound = pygame.mixer.Sound(buffer=samples.tobytes())
+            sound.set_volume(1.0)
+            return sound
         except Exception:
             return None
