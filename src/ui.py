@@ -80,7 +80,7 @@ class UI:
         y += 10
         controls = [
             "Souris : viser",
-            "Clic gauche : tirer",
+            "Clic gauche / F / Ctrl : tirer",
             "Espace : contrôler la respiration",
             "R : recharger",
             "C : nettoyer le canon",
