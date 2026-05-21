@@ -6,55 +6,56 @@ from src.utils import clamp
 
 
 def apply_breath_toggle_patch(GameClass) -> None:
-    """Breath control that does not block firing.
+    """Toggle breath control without blocking the trigger.
 
-    True Space+click or right-click+left-click combinations can be unreliable on
-    some keyboards, mice, and touchpads. So the control works like this:
-    hold Space or right click to enter controlled breathing, and if the input is
-    released after a real hold, the game keeps a very short shooting window.
-    This preserves the hold feeling while still letting the player fire reliably.
+    Space toggles breath control in shooting mode. While breath control is active,
+    firing remains independent through mouse polling and keyboard polling.
     """
 
     original_init = GameClass.__init__
     original_reset = GameClass.reset
     original_next_stage = GameClass.next_stage
     original_equip_weapon = GameClass.equip_weapon
-    original_finish_fire = GameClass.finish_fire
 
     def patched_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
         self.breath_control_active = False
         self.trigger_input_locked = False
-        self.breath_input_time = 0.0
-        self.breath_release_grace = 0.0
 
     def patched_reset(self, *args, **kwargs):
         self.breath_control_active = False
         self.trigger_input_locked = False
-        self.breath_input_time = 0.0
-        self.breath_release_grace = 0.0
         return original_reset(self, *args, **kwargs)
 
     def patched_next_stage(self, *args, **kwargs):
         self.breath_control_active = False
         self.trigger_input_locked = False
-        self.breath_input_time = 0.0
-        self.breath_release_grace = 0.0
         return original_next_stage(self, *args, **kwargs)
 
     def patched_equip_weapon(self, *args, **kwargs):
         self.breath_control_active = False
         self.trigger_input_locked = False
-        self.breath_input_time = 0.0
-        self.breath_release_grace = 0.0
         return original_equip_weapon(self, *args, **kwargs)
 
-    def patched_finish_fire(self, *args, **kwargs):
-        self.breath_release_grace = 0.0
-        result = original_finish_fire(self, *args, **kwargs)
-        return result
+    def toggle_breath_control(self) -> None:
+        if self.weapon.reloading or self.weapon.cleaning:
+            self.breath_control_active = False
+            self.show_message("Respiration impossible pendant cette action.", 0.9)
+            return
+
+        if self.breath <= 3:
+            self.breath_control_active = False
+            self.show_message("Souffle épuisé.", 0.9)
+            return
+
+        self.breath_control_active = not self.breath_control_active
+        if self.breath_control_active:
+            self.show_message("Respiration contrôlée.", 0.8)
+        else:
+            self.show_message("Respiration relâchée.", 0.8)
 
     def fire_from_trigger_input(self) -> None:
+        """Fire once from any trigger input, regardless of breathing state."""
         if self.state == "menu":
             self.state = "playing"
             pygame.mouse.set_visible(False)
@@ -66,27 +67,20 @@ def apply_breath_toggle_patch(GameClass) -> None:
 
         self.try_fire()
 
-    def cancel_breath_control(self) -> None:
-        self.breath_control_active = False
-        self.breath_input_time = 0.0
-        self.breath_release_grace = 0.0
-
     def patched_handle_events(self) -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.quit()
 
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    if self.state == "shop":
-                        self.handle_shop_click(event.pos)
-                    else:
-                        self.fire_from_trigger_input()
-                        self.trigger_input_locked = True
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.state == "shop":
+                    self.handle_shop_click(event.pos)
+                else:
+                    self.fire_from_trigger_input()
+                    self.trigger_input_locked = True
 
-            if event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    self.trigger_input_locked = False
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                self.trigger_input_locked = False
 
             if event.type == pygame.MOUSEMOTION and self.state == "shop":
                 hovered = self.shop_index_from_pos(event.pos)
@@ -129,28 +123,29 @@ def apply_breath_toggle_patch(GameClass) -> None:
                         self.handle_shop_selection(event.key - pygame.K_1)
 
                 elif self.state == "playing":
-                    if event.key in (pygame.K_f, pygame.K_LCTRL, pygame.K_RCTRL):
+                    if event.key == pygame.K_SPACE:
+                        self.toggle_breath_control()
+                    elif event.key in (pygame.K_f, pygame.K_LCTRL, pygame.K_RCTRL):
                         self.fire_from_trigger_input()
                         self.trigger_input_locked = True
                     elif event.key == pygame.K_b:
-                        self.cancel_breath_control()
+                        self.breath_control_active = False
                         self.state = "shop"
                         pygame.mouse.set_visible(True)
                         self.show_message("Boutique ouverte.", 1.0)
                     elif event.key == pygame.K_r:
-                        self.cancel_breath_control()
+                        self.breath_control_active = False
                         if self.weapon.start_reload():
                             self.show_message("Rechargement...", 0.8)
                         elif self.weapon.loaded:
                             self.show_message("Déjà chargé.", 0.8)
                     elif event.key == pygame.K_c:
-                        self.cancel_breath_control()
+                        self.breath_control_active = False
                         if self.weapon.start_cleaning():
                             self.show_message("Nettoyage du canon...", 0.8)
 
     def patched_update_click_polling(self) -> None:
-        mouse_buttons = pygame.mouse.get_pressed(num_buttons=3)
-        mouse_left = mouse_buttons[0]
+        mouse_left = pygame.mouse.get_pressed(num_buttons=3)[0]
         keys = pygame.key.get_pressed()
         keyboard_trigger = keys[pygame.K_f] or keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]
         trigger_down = mouse_left or keyboard_trigger
@@ -161,6 +156,8 @@ def apply_breath_toggle_patch(GameClass) -> None:
                 self.trigger_input_locked = False
             return
 
+        # Trigger input is checked independently from Space/breathing.
+        # Even if breath_control_active is True, the shot can start.
         if trigger_down and not self.trigger_input_locked:
             self.fire_from_trigger_input()
             self.trigger_input_locked = True
@@ -171,34 +168,19 @@ def apply_breath_toggle_patch(GameClass) -> None:
         self.prev_left_down = mouse_left
 
     def patched_update_breathing(self, dt: float) -> None:
-        keys = pygame.key.get_pressed()
-        mouse_buttons = pygame.mouse.get_pressed(num_buttons=3)
-        holding_breath_input = keys[pygame.K_SPACE] or mouse_buttons[2]
+        if self.breath_control_active and (self.weapon.reloading or self.weapon.cleaning):
+            self.breath_control_active = False
 
-        can_control = (
-            self.state == "playing"
+        if self.breath_control_active and self.breath <= 0:
+            self.breath_control_active = False
+            self.show_message("Souffle épuisé.", 0.9)
+
+        breath_control = (
+            self.breath_control_active
             and self.breath > 0
             and not self.weapon.reloading
             and not self.weapon.cleaning
         )
-
-        if holding_breath_input and can_control:
-            self.breath_input_time += dt
-            # Keep a short grace window after release, because many setups cannot
-            # press breath + trigger at the exact same time.
-            if self.breath_input_time >= 0.16:
-                self.breath_release_grace = 0.55
-        else:
-            self.breath_input_time = 0.0
-            self.breath_release_grace = max(0.0, self.breath_release_grace - dt)
-
-        breath_control = can_control and (
-            holding_breath_input or self.breath_release_grace > 0
-        )
-        self.breath_control_active = breath_control
-
-        if (holding_breath_input or self.breath_release_grace > 0) and self.breath <= 0 and self.state == "playing":
-            self.show_message("Souffle épuisé.", 0.9)
 
         if breath_control:
             self.breath_hold_time += dt
@@ -263,8 +245,7 @@ def apply_breath_toggle_patch(GameClass) -> None:
     GameClass.reset = patched_reset
     GameClass.next_stage = patched_next_stage
     GameClass.equip_weapon = patched_equip_weapon
-    GameClass.finish_fire = patched_finish_fire
-    GameClass.cancel_breath_control = cancel_breath_control
+    GameClass.toggle_breath_control = toggle_breath_control
     GameClass.fire_from_trigger_input = fire_from_trigger_input
     GameClass.handle_events = patched_handle_events
     GameClass.update_click_polling = patched_update_click_polling
