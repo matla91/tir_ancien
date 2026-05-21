@@ -1,0 +1,18 @@
+{
+  "weapons": [
+    {
+      "id": "flintlock_basic",
+      "name": "Pistolet à silex de frontière",
+      "price": 0,
+      "precision": 34,
+      "stability": 32,
+      "reload_time": 2.8,
+      "fouling_rate": 1.0,
+      "shot_delay_min": 0.075,
+      "shot_delay_max": 0.18,
+      "effective_range": 25,
+      "sprite": "images/weapons/flintlock_basic.png",
+      "sprite_scale": 0.62
+    }
+  ]
+}

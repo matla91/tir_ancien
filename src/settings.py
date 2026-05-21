@@ -1,0 +1,29 @@
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+ASSETS_DIR = ROOT_DIR / "assets"
+DATA_DIR = ROOT_DIR / "data"
+
+WIDTH = 1180
+HEIGHT = 720
+FPS = 60
+
+STAGES_METERS = [25, 50, 75, 100, 200]
+SHOTS_PER_STAGE = 5
+
+SAND = (201, 173, 116)
+SAND_DARK = (154, 122, 75)
+FOREST = (35, 86, 49)
+FOREST_DARK = (22, 58, 34)
+WOOD = (89, 56, 32)
+BLACK = (16, 16, 16)
+WHITE = (242, 242, 236)
+RED = (176, 35, 32)
+BLUE = (40, 72, 128)
+GREEN = (62, 144, 78)
+YELLOW = (220, 182, 74)
+GREY = (110, 110, 110)
+DARK_GREY = (50, 50, 50)
+STEEL = (70, 72, 70)
+BRASS = (205, 170, 78)
+SKIN = (190, 137, 96)
