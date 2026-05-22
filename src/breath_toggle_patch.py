@@ -16,6 +16,7 @@ def apply_breath_toggle_patch(GameClass) -> None:
     original_reset = GameClass.reset
     original_next_stage = GameClass.next_stage
     original_equip_weapon = GameClass.equip_weapon
+    original_try_fire = GameClass.try_fire
 
     def patched_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
@@ -30,7 +31,10 @@ def apply_breath_toggle_patch(GameClass) -> None:
     def patched_next_stage(self, *args, **kwargs):
         self.breath_control_active = False
         self.trigger_input_locked = False
-        return original_next_stage(self, *args, **kwargs)
+        result = original_next_stage(self, *args, **kwargs)
+        if hasattr(self.weapon, "cancel_reload"):
+            self.weapon.cancel_reload()
+        return result
 
     def patched_equip_weapon(self, *args, **kwargs):
         self.breath_control_active = False
@@ -66,6 +70,49 @@ def apply_breath_toggle_patch(GameClass) -> None:
             return
 
         self.try_fire()
+
+    def patched_try_fire(self) -> None:
+        if self.pending_shot_delay > 0:
+            return
+
+        if self.weapon.reloading:
+            self.show_message(self.weapon.reload_status_message(), 1.0)
+            return
+
+        if self.weapon.cleaning:
+            self.show_message("Nettoyage en cours.", 0.8)
+            return
+
+        return original_try_fire(self)
+
+    def handle_reload_key(self) -> None:
+        self.breath_control_active = False
+
+        if self.weapon.start_reload():
+            self.show_message(self.weapon.reload_status_message(), 1.2)
+        elif self.weapon.reloading:
+            self.show_message(self.weapon.reload_status_message(), 1.0)
+        elif self.weapon.loaded:
+            self.show_message("Déjà chargé.", 0.8)
+        elif self.weapon.cleaning:
+            self.show_message("Nettoyage en cours.", 0.8)
+        else:
+            self.show_message("Impossible de recharger maintenant.", 0.8)
+
+    def handle_reload_step_key(self) -> None:
+        self.breath_control_active = False
+
+        if self.weapon.reloading:
+            self.weapon.advance_reload_step()
+
+            if self.weapon.loaded:
+                self.show_message("Arme prête.", 0.9)
+            else:
+                self.show_message(self.weapon.reload_status_message(), 1.2)
+            return
+
+        if not self.weapon.loaded:
+            self.show_message("Arme vide : R pour commencer le rechargement.", 1.0)
 
     def patched_handle_events(self) -> None:
         for event in pygame.event.get():
@@ -134,11 +181,9 @@ def apply_breath_toggle_patch(GameClass) -> None:
                         pygame.mouse.set_visible(True)
                         self.show_message("Boutique ouverte.", 1.0)
                     elif event.key == pygame.K_r:
-                        self.breath_control_active = False
-                        if self.weapon.start_reload():
-                            self.show_message("Rechargement...", 0.8)
-                        elif self.weapon.loaded:
-                            self.show_message("Déjà chargé.", 0.8)
+                        self.handle_reload_key()
+                    elif event.key == pygame.K_e:
+                        self.handle_reload_step_key()
                     elif event.key == pygame.K_c:
                         self.breath_control_active = False
                         if self.weapon.start_cleaning():
@@ -247,6 +292,9 @@ def apply_breath_toggle_patch(GameClass) -> None:
     GameClass.equip_weapon = patched_equip_weapon
     GameClass.toggle_breath_control = toggle_breath_control
     GameClass.fire_from_trigger_input = fire_from_trigger_input
+    GameClass.try_fire = patched_try_fire
+    GameClass.handle_reload_key = handle_reload_key
+    GameClass.handle_reload_step_key = handle_reload_step_key
     GameClass.handle_events = patched_handle_events
     GameClass.update_click_polling = patched_update_click_polling
     GameClass.update_breathing = patched_update_breathing
