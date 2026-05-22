@@ -41,6 +41,15 @@ class UI:
         weapon = game.weapon
         target = game.target.target_type
 
+        if weapon.reloading:
+            weapon_state = "rechargement"
+        elif weapon.cleaning:
+            weapon_state = "nettoyage"
+        elif weapon.loaded:
+            weapon_state = "chargée"
+        else:
+            weapon_state = "vide"
+
         y = 18
         lines = [
             f"Argent : ${game.money}",
@@ -52,7 +61,7 @@ class UI:
             f"Score série : {stage_total}",
             f"Score total : {total}",
             "",
-            f"État : {'chargée' if weapon.loaded else 'vide'}",
+            f"État : {weapon_state}",
             f"Encrassement : {weapon.fouling:.1f}/10",
             f"Fatigue : {game.fatigue:.0f}/100",
             f"Vent latéral : {game.wind:+.2f}",
@@ -68,8 +77,15 @@ class UI:
         y += 42
 
         if weapon.reloading:
-            self.draw_bar(surface, 20, y, 290, 22, weapon.reload_progress, "Rechargement", (40, 72, 128))
-            y += 34
+            step = weapon.reload_step_index + 1
+            total_steps = len(weapon.RELOAD_STEPS)
+            label = f"Rechargement {step}/{total_steps}"
+            self.draw_bar(surface, 20, y, 290, 22, weapon.reload_progress, label, (40, 72, 128))
+            y += 28
+
+            step_text = self.small.render(f"E : {weapon.current_reload_step_label()}", True, YELLOW)
+            surface.blit(step_text, (20, y))
+            y += 26
 
         if weapon.cleaning:
             self.draw_bar(surface, 20, y, 290, 22, weapon.clean_progress, "Nettoyage", YELLOW)
@@ -84,7 +100,8 @@ class UI:
             "Souris : viser",
             "Clic gauche / F / Ctrl : tirer",
             "Espace : contrôler la respiration",
-            "R : recharger",
+            "R : lancer le rechargement",
+            "E : étape de rechargement",
             "C : nettoyer le canon",
             "B : boutique",
             "Entrée : continuer",

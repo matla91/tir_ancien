@@ -26,6 +26,14 @@ class WeaponStats:
 
 
 class Weapon:
+    RELOAD_STEPS = (
+        "verser la poudre",
+        "mettre la balle",
+        "tasser avec la baguette",
+        "armer le chien",
+        "remettre l'arme en position",
+    )
+
     def __init__(self, stats: WeaponStats, sprite: Optional[pygame.Surface] = None) -> None:
         self.stats = stats
         self.sprite = sprite
@@ -33,6 +41,7 @@ class Weapon:
         self.loaded = True
         self.reloading = False
         self.reload_progress = 0.0
+        self.reload_step_index = -1
 
         self.cleaning = False
         self.clean_progress = 0.0
@@ -82,6 +91,7 @@ class Weapon:
         self.loaded = True
         self.reloading = False
         self.reload_progress = 0.0
+        self.reload_step_index = -1
         self.cleaning = False
         self.clean_progress = 0.0
         self.recoil = pygame.Vector2(0, 0)
@@ -90,12 +100,54 @@ class Weapon:
         if clean_barrel:
             self.fouling = 0.0
 
+    def cancel_reload(self) -> None:
+        self.reloading = False
+        self.reload_progress = 0.0
+        self.reload_step_index = -1
+
     def start_reload(self) -> bool:
         if self.loaded or self.reloading or self.cleaning:
             return False
         self.reloading = True
         self.reload_progress = 0.0
+        self.reload_step_index = 0
         return True
+
+    def advance_reload_step(self) -> bool:
+        if not self.reloading:
+            return False
+
+        self.reload_step_index += 1
+        total_steps = len(self.RELOAD_STEPS)
+
+        if self.reload_step_index >= total_steps:
+            self.reloading = False
+            self.loaded = True
+            self.reload_progress = 1.0
+            self.reload_step_index = -1
+            return True
+
+        self.reload_progress = self.reload_step_index / total_steps
+        return True
+
+    def current_reload_step_label(self) -> str:
+        if not self.reloading or self.reload_step_index < 0:
+            return ""
+
+        index = min(self.reload_step_index, len(self.RELOAD_STEPS) - 1)
+        return self.RELOAD_STEPS[index]
+
+    def reload_status_message(self) -> str:
+        if self.loaded:
+            return "Arme prête."
+
+        if not self.reloading:
+            return "Arme vide : R pour commencer le rechargement."
+
+        step_number = self.reload_step_index + 1
+        total_steps = len(self.RELOAD_STEPS)
+        step_label = self.current_reload_step_label()
+        return f"Étape {step_number}/{total_steps} : {step_label} - E pour continuer."
 
     def start_cleaning(self) -> bool:
         if self.reloading or self.cleaning:
@@ -108,14 +160,6 @@ class Weapon:
         return random.uniform(self.stats.shot_delay_min, self.stats.shot_delay_max)
 
     def update(self, dt: float) -> None:
-        if self.reloading:
-            duration = self.stats.reload_time + self.fouling * 0.08
-            self.reload_progress += dt / max(duration, 0.01)
-            if self.reload_progress >= 1.0:
-                self.reload_progress = 1.0
-                self.reloading = False
-                self.loaded = True
-
         if self.cleaning:
             clean_duration = 2.2
             self.clean_progress += dt / clean_duration
@@ -131,6 +175,7 @@ class Weapon:
 
     def apply_shot_feedback(self) -> None:
         self.loaded = False
+        self.cancel_reload()
         self.fouling = clamp(self.fouling + random.uniform(0.7, 1.2) * self.stats.fouling_rate, 0, 10)
         self.recoil = pygame.Vector2(random.uniform(-8, 8), random.uniform(-32, -18))
         self.shot_effect_time = 0.16
