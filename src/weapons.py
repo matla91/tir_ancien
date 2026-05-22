@@ -276,7 +276,7 @@ class Weapon:
             anchor - direction * 40 - normal * 8,
             anchor - direction * 95 - normal * 88,
             anchor - direction * 60 - normal * 108,
-            anchor - direction * 10 + normal * 42,
+            anchor - direction * 10 - normal * 42,
         ]
         pygame.draw.polygon(surface, (104, 61, 34), grip_points)
         pygame.draw.polygon(surface, (45, 27, 18), grip_points, 2)
